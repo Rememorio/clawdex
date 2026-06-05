@@ -1,0 +1,178 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test:
+    name: Test & Coverage
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        run: |
+          GO_VERSION=$(grep '^go ' go.mod | awk '{print $2}')
+          curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
+          sudo rm -rf /usr/local/go
+          sudo tar -C /usr/local -xzf /tmp/go.tar.gz
+          echo "/usr/local/go/bin" >> $GITHUB_PATH
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests with coverage
+        id: tests
+        continue-on-error: true
+        timeout-minutes: 8
+        run: go test -race -timeout=6m -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Generate coverage summary
+        id: coverage
+        if: always() && steps.tests.outcome != 'skipped'
+        run: |
+          if [ ! -f coverage.out ]; then
+            echo "No coverage file generated"
+            exit 0
+          fi
+
+          TOTAL=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "total=${TOTAL}" >> $GITHUB_OUTPUT
+
+          THRESHOLD=75
+          if [ "$(echo "$TOTAL < $THRESHOLD" | bc)" -eq 1 ]; then
+            echo "passed=false" >> $GITHUB_OUTPUT
+          else
+            echo "passed=true" >> $GITHUB_OUTPUT
+          fi
+
+          # Calculate per-package coverage from the profile
+          # Each line in coverage.out: file:startline.col,endline.col numStatements count
+          # We sum statements and covered statements per package (skip cmd/)
+          awk -F'[: ,]' 'NR>1 {
+            file=$1
+            if (file ~ /\/cmd\//) next
+            sub(/\/[^\/]+$/, "", file)
+            sub(/github.com\/Rememorio\/clawdex\//, "", file)
+            stmts=$(NF-1); count=$NF
+            total[file] += stmts
+            if (count > 0) covered[file] += stmts
+          } END {
+            for (pkg in total) {
+              pct = (total[pkg] > 0) ? covered[pkg] * 100.0 / total[pkg] : 0
+              printf "%s %.1f\n", pkg, pct
+            }
+          }' coverage.out | sort -k2 -n > /tmp/pkg_coverage.txt
+
+          # Step summary
+          {
+            echo "## 📊 Coverage: ${TOTAL}%"
+            echo ""
+            echo "| Package | Coverage |"
+            echo "|---------|----------|"
+            while read pkg pct; do
+              val=$(echo "$pct" | cut -d. -f1)
+              if [ "$val" -ge 85 ]; then icon="🟢";
+              elif [ "$val" -ge 60 ]; then icon="🟡";
+              else icon="🔴"; fi
+              echo "| \`${pkg}\` | ${icon} \`${pct}%\` |"
+            done < /tmp/pkg_coverage.txt
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment coverage on PR
+        if: always() && github.event_name == 'pull_request' && steps.coverage.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TOTAL: ${{ steps.coverage.outputs.total }}
+          PASSED: ${{ steps.coverage.outputs.passed }}
+          TESTS_OK: ${{ steps.tests.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ ! -f coverage.out ]; then exit 0; fi
+
+          # Build per-package table using same awk logic
+          awk -F'[: ,]' 'NR>1 {
+            file=$1
+            if (file ~ /\/cmd\//) next
+            sub(/\/[^\/]+$/, "", file)
+            sub(/github.com\/Rememorio\/clawdex\//, "", file)
+            stmts=$(NF-1); count=$NF
+            total[file] += stmts
+            if (count > 0) covered[file] += stmts
+          } END {
+            for (pkg in total) {
+              pct = (total[pkg] > 0) ? covered[pkg] * 100.0 / total[pkg] : 0
+              printf "%s %.1f\n", pkg, pct
+            }
+          }' coverage.out | sort -k2 -n | while read pkg pct; do
+            val=$(echo "$pct" | cut -d. -f1)
+            if [ "$val" -ge 85 ]; then icon="🟢";
+            elif [ "$val" -ge 60 ]; then icon="🟡";
+            else icon="🔴"; fi
+            echo "| \`${pkg}\` | ${icon} \`${pct}%\` |"
+          done > /tmp/table_rows.txt
+
+          # Status icons
+          if [ "$TESTS_OK" = "success" ]; then STATUS_ICON="✅"; TESTS_MSG="✅ All passed";
+          else STATUS_ICON="⚠️"; TESTS_MSG="⚠️ Some failed"; fi
+          if [ "$PASSED" = "true" ]; then COVER_ICON="🟢"; else COVER_ICON="🔴"; fi
+
+          # Build comment body
+          cat > /tmp/comment.md << COMMENT_EOF
+          ## ${STATUS_ICON} CI Results
+
+          | Metric | Value |
+          |--------|-------|
+          | Coverage | ${COVER_ICON} **${TOTAL}%** (threshold: 75%) |
+          | Tests | ${TESTS_MSG} |
+
+          <details>
+          <summary>📦 Coverage by Package</summary>
+
+          | Package | Coverage |
+          |---------|----------|
+          $(cat /tmp/table_rows.txt)
+
+          </details>
+
+          ---
+          > 🤖 Generated by CI — [View run](${RUN_URL})
+          COMMENT_EOF
+
+          # Remove leading spaces from heredoc
+          sed -i 's/^          //' /tmp/comment.md
+
+          # Find existing comment and update or create
+          COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+            --jq '.[] | select(.user.type == "Bot" and (.body | contains("CI Results"))) | .id' | head -1)
+
+          if [ -n "$COMMENT_ID" ]; then
+            gh api repos/${{ github.repository }}/issues/comments/${COMMENT_ID} \
+              -X PATCH -F "body=@/tmp/comment.md"
+          else
+            gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/comment.md
+          fi
+
+      - name: Fail if tests failed
+        if: steps.tests.outcome == 'failure'
+        run: |
+          echo "::error::Some tests failed — see logs above for details."
+          exit 1
+
+      - name: Fail if coverage below threshold
+        if: steps.coverage.outputs.passed == 'false'
+        run: |
+          echo "::error::Coverage ${{ steps.coverage.outputs.total }}% is below threshold 60%"
+          exit 1
