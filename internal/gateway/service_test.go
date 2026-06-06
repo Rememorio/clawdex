@@ -1149,28 +1149,25 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"final comp
 	assert.Equal(t, "final complete result", resp.mockStreamResponder.mockResponder.replies[0].Text)
 }
 
-// TestRunEditStreaming_StreamGuardReplaysCumulativeText verifies the fix for
-// the duplicate "mid-thought reply" bug: when the guard timer closes the
-// stream early and codex later emits multiple agent_message items, the
-// post-expired replay must carry the cumulative view the user already saw
-// (joined with "---" separators by RunStream's accumulator) rather than
-// only the *last* agent_message — otherwise the user receives a short
-// orphan paragraph long after the "Still working" indicator.
-func TestRunEditStreaming_StreamGuardReplaysCumulativeText(t *testing.T) {
+// TestRunEditStreaming_StreamGuardCompletedPrefersFinalAgentMessage verifies
+// that an expired stream does not replay intermediary status messages when
+// Codex later completes normally. The final new message should match the
+// last completed agent_message, just like the normal non-expired final edit.
+func TestRunEditStreaming_StreamGuardCompletedPrefersFinalAgentMessage(t *testing.T) {
 	origMaxAge := streamMaxAge
 	streamMaxAge = 200 * time.Millisecond
 	t.Cleanup(func() { streamMaxAge = origMaxAge })
 
 	binDir := t.TempDir()
 	script := filepath.Join(binDir, "codex")
-	// Codex emits two agent_message items: a long lead, then a short
-	// follow-up. The guard fires between them, so the user has already
-	// seen "lead\n\n---\n\nfollowup" by the time the stream closes.
+	// Codex emits an early status message, then finishes after the guard has
+	// closed the WeCom stream. The post-expired fallback should send only the
+	// final answer, not the streaming accumulator.
 	scriptContent := `#!/bin/sh
 echo '{"type":"thread.started","thread_id":"sess-replay"}'
-echo '{"type":"item.completed","item":{"type":"agent_message","text":"lead message — the user saw this part live"}}'
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"status: checking files"}}'
 sleep 1
-echo '{"type":"item.completed","item":{"type":"agent_message","text":"followup snippet"}}'
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"final complete result"}}'
 `
 	require.NoError(t, os.WriteFile(script, []byte(scriptContent), 0o755))
 	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
@@ -1199,14 +1196,9 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"followup s
 	resp.mockStreamResponder.mu.Lock()
 	defer resp.mockStreamResponder.mu.Unlock()
 	require.NotEmpty(t, resp.mockStreamResponder.mockResponder.replies,
-		"Reply should deliver the cumulative result after stream expired")
+		"Reply should deliver the final result after stream expired")
 	got := resp.mockStreamResponder.mockResponder.replies[0].Text
-	assert.Contains(t, got, "lead message",
-		"replay must include the lead the user already saw, not just the last agent_message")
-	assert.Contains(t, got, "followup snippet",
-		"replay must include the follow-up too")
-	assert.Contains(t, got, "---",
-		"cumulative replay should preserve RunStream's per-message separator")
+	assert.Equal(t, "final complete result", got)
 }
 
 // TestRunEditStreaming_StreamGuardReplayPrependsTimeoutNotice verifies that

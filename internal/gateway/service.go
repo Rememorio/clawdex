@@ -586,11 +586,19 @@ func (s *Service) runEditStreaming(ctx context.Context, j job, sr channel.Stream
 			return
 		}
 		// Stream was closed early; deliver the final output as a new message.
-		// Prefer the cumulative snapshot (what the user actually saw before
-		// the stream closed); fall back to `out` if no chunks ever arrived.
-		replay := streamSnapshot
-		if replay == "" {
-			replay = out
+		// If Codex completed normally, prefer the final agent_message (`out`),
+		// matching the non-expired final edit path and avoiding replay of
+		// intermediary status messages that were only useful during streaming.
+		// If Codex itself timed out, the cumulative snapshot is more useful
+		// because `out` may be empty or only the last partial fragment.
+		replay := out
+		if streamErr == context.DeadlineExceeded {
+			replay = streamSnapshot
+			if replay == "" {
+				replay = out
+			}
+		} else if replay == "" {
+			replay = streamSnapshot
 		}
 		if streamErr == context.DeadlineExceeded && s.codexClient != nil && s.codexClient.Timeout > 0 {
 			prefix := fmt.Sprintf("⏰ Codex hit timeout (%s). Here is what it produced before being stopped:\n\n",
