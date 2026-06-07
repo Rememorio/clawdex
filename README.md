@@ -6,7 +6,7 @@ Layered Go gateway that forwards channel messages to native Codex and sends resu
 
 ## Features
 
-- **Multi-Channel Support** — Telegram, WeCom (企业微信), Weixin (微信), and QQ Bot with unified message handling
+- **Multi-Channel Support** — Telegram, WeCom (企业微信), Weixin (微信), QQ Bot, and Feishu with unified message handling
 - **Native Codex Integration** — Direct CLI bridge with session persistence
 - **Streaming Replies** — Real-time typewriter effect (Telegram partial edits, WeCom WebSocket streams)
 - **Access Control** — Pairing codes, allowlists, per-group permissions
@@ -32,6 +32,7 @@ Before installing clawdex, ensure you have:
    - **WeCom**: Token + EncodingAESKey (webhook) or BotID + Secret (websocket)
    - **Weixin**: No pre-setup needed — scan QR code during onboard
    - **QQ Bot**: App ID + Client Secret from [q.qq.com](https://q.qq.com)
+   - **Feishu**: App ID + App Secret from [Feishu Open Platform](https://open.feishu.cn)
 
 ### Environment Variables
 
@@ -53,6 +54,10 @@ export WECOM_SECRET="your-websocket-secret"
 # QQ Bot (if using QQ)
 export QQ_APP_ID="your-app-id"
 export QQ_CLIENT_SECRET="your-client-secret"
+
+# Feishu (if using Feishu)
+export FEISHU_APP_ID="cli_xxx"
+export FEISHU_APP_SECRET="your-app-secret"
 ```
 
 You can also add these to `~/.clawdex/env` (loaded by systemd service):
@@ -164,6 +169,15 @@ Config is stored in `~/.clawdex/clawdex.json`. All settings can also be overridd
       "client_secret": "${QQ_CLIENT_SECRET}",
       "dm_policy": "open",
       "group_policy": "open"
+    },
+    "feishu": {
+      "type": "feishu",
+      "enabled": true,
+      "app_id": "${FEISHU_APP_ID}",
+      "app_secret": "${FEISHU_APP_SECRET}",
+      "dm_policy": "pairing",
+      "group_policy": "allowlist",
+      "require_mention": true
     }
   },
   "codex": {
@@ -201,7 +215,7 @@ See [docs/TELEGRAM.md](docs/TELEGRAM.md) for other access control modes.
 
 ## Bot Commands
 
-Available in Telegram, WeCom, Weixin, and QQ Bot:
+Available in Telegram, WeCom, Weixin, QQ Bot, and Feishu:
 
 | Command | Description |
 |---------|-------------|
@@ -237,6 +251,7 @@ clawdex doctor --fix      # Check and auto-fix problems
 - [WeCom Channel](docs/WECOM.md) — WeCom (企业微信) setup, encryption, webhook configuration, multi-instance.
 - [Weixin Channel](docs/WEIXIN.md) — Weixin (微信) personal WeChat setup, QR login, typing indicators, media.
 - [QQ Bot Channel](docs/QQBOT.md) — QQ Bot setup, WebSocket gateway, group @-mentions, media upload.
+- [Feishu Channel](docs/FEISHU.md) — Feishu long connection setup, receive-message events, access control.
 
 ## Architecture
 
@@ -249,6 +264,7 @@ internal/
   channel/wecom/     WeCom webhook & WebSocket driver
   channel/weixin/    Weixin personal WeChat long-polling driver
   channel/qqbot/     QQ Bot WebSocket driver
+  channel/feishu/    Feishu long-connection driver
   gateway/           Message orchestration, worker pool, slash commands
   codex/             Native Codex CLI bridge (codex exec)
   config/            Configuration loading (file + env)

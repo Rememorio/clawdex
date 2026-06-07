@@ -27,7 +27,7 @@ Key characteristics:
 ```
 $ clawdex onboard
 ...
-  Choice [1/2/3/4/5]: 4
+  Choice [1/2/3/4/5/6]: 4
 
 QQ Bot
   Instance name [qqbot]:

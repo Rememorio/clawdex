@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/clawdex/internal/channel"
+	"github.com/Rememorio/clawdex/internal/channel/feishu"
 	"github.com/Rememorio/clawdex/internal/channel/telegram"
 	"github.com/Rememorio/clawdex/internal/channel/wecom"
 	"github.com/Rememorio/clawdex/internal/config"
@@ -121,6 +122,47 @@ func buildGatewayComponents(
 			})
 		}
 		drivers = append(drivers, wecomDriver)
+	}
+
+	for _, fsCfg := range cfg.Feishu {
+		if !fsCfg.Enabled {
+			continue
+		}
+
+		var groups map[string]feishu.GroupRule
+		if fsCfg.Groups != nil {
+			groups = make(
+				map[string]feishu.GroupRule, len(fsCfg.Groups),
+			)
+			for k, v := range fsCfg.Groups {
+				groups[k] = feishu.GroupRule{
+					Enabled:        v.Enabled,
+					AllowFrom:      v.AllowFrom,
+					RequireMention: v.RequireMention,
+				}
+			}
+		}
+
+		feishuDriver := feishu.New(feishu.Config{
+			Name:           fsCfg.Name,
+			AppID:          fsCfg.AppID,
+			AppSecret:      fsCfg.AppSecret,
+			BaseURL:        fsCfg.BaseURL,
+			TextChunkLimit: fsCfg.TextChunkLimit,
+			DMPolicy:       fsCfg.DMPolicy,
+			AllowFrom:      fsCfg.AllowFrom,
+			GroupPolicy:    fsCfg.GroupPolicy,
+			GroupAllowFrom: fsCfg.GroupAllowFrom,
+			Groups:         groups,
+			RequireMention: fsCfg.RequireMention,
+		}, pairingStore)
+
+		if fsCfg.DMPolicy == "pairing" {
+			approvers[fsCfg.Name] = &channelApprover{
+				addAllowedString: feishuDriver.AddAllowedUser,
+			}
+		}
+		drivers = append(drivers, feishuDriver)
 	}
 
 	if len(approvers) > 0 {
@@ -285,6 +327,36 @@ func TestBuildGateway_SingleWeComWebhook(t *testing.T) {
 		}
 	}
 	assert.True(t, hasWebhook, "expected webhook route /wecom/cb")
+}
+
+func TestBuildGateway_SingleFeishu(t *testing.T) {
+	cfg := &config.Config{
+		Feishu: []config.FeishuConfig{
+			{
+				Name:      "fs-main",
+				AppID:     "cli_test",
+				AppSecret: "secret",
+				Enabled:   true,
+				DMPolicy:  "pairing",
+			},
+		},
+	}
+
+	drivers, routes, approvers, _ := buildGatewayComponents(cfg)
+
+	require.Len(t, drivers, 1)
+	assert.Equal(t, "fs-main", drivers[0].Name())
+	require.Contains(t, approvers, "fs-main")
+	assert.Nil(t, approvers["fs-main"].addAllowedInt64)
+	assert.NotNil(t, approvers["fs-main"].addAllowedString)
+
+	hasApproveRoute := false
+	for _, r := range routes {
+		if r.Pattern == "/pairing/approve" {
+			hasApproveRoute = true
+		}
+	}
+	assert.True(t, hasApproveRoute)
 }
 
 func TestBuildGateway_WeComWebsocketNoRoute(t *testing.T) {
