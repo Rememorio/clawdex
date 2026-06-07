@@ -6,7 +6,7 @@ Go 语言实现的网关服务，将多渠道消息转发到原生 Codex CLI 并
 
 ## 功能特性
 
-- **多渠道支持** — Telegram、企业微信（WeCom）、微信（Weixin）和 QQ Bot 统一消息处理
+- **多渠道支持** — Telegram、企业微信（WeCom）、微信（Weixin）、QQ Bot 和飞书统一消息处理
 - **原生 Codex 集成** — 直接 CLI 桥接，支持会话持久化
 - **流式回复** — 实时打字机效果（Telegram 部分编辑、企微 WebSocket 流式消息）
 - **访问控制** — 配对码验证、白名单、群组权限管理
@@ -32,6 +32,7 @@ Go 语言实现的网关服务，将多渠道消息转发到原生 Codex CLI 并
    - **企业微信**：Token + EncodingAESKey（webhook）或 BotID + Secret（websocket）
    - **微信**：无需预设置 — onboard 时扫码即可
    - **QQ Bot**：从 [q.qq.com](https://q.qq.com) 获取 App ID + Client Secret
+   - **飞书**：从 [飞书开放平台](https://open.feishu.cn) 获取 App ID + App Secret
 
 ### 环境变量
 
@@ -53,6 +54,10 @@ export WECOM_SECRET="your-websocket-secret"
 # QQ Bot（如使用 QQ）
 export QQ_APP_ID="your-app-id"
 export QQ_CLIENT_SECRET="your-client-secret"
+
+# 飞书（如使用飞书）
+export FEISHU_APP_ID="cli_xxx"
+export FEISHU_APP_SECRET="your-app-secret"
 ```
 
 也可以添加到 `~/.clawdex/env`（systemd 服务会自动加载）：
@@ -151,6 +156,15 @@ clawdex gateway uninstall
       "connection_mode": "websocket",
       "botid": "your-bot-id",
       "secret": "${WECOM_SECRET}"
+    },
+    "feishu": {
+      "type": "feishu",
+      "enabled": true,
+      "app_id": "${FEISHU_APP_ID}",
+      "app_secret": "${FEISHU_APP_SECRET}",
+      "dm_policy": "pairing",
+      "group_policy": "allowlist",
+      "require_mention": true
     }
   },
   "codex": {
@@ -188,7 +202,7 @@ clawdex pairing approve <CODE>    # 审批用户
 
 ## 机器人命令
 
-Telegram、企业微信和微信均支持：
+Telegram、企业微信、微信、QQ Bot 和飞书均支持：
 
 | 命令 | 说明 |
 |------|------|
@@ -224,6 +238,7 @@ clawdex doctor --fix      # 检查并自动修复问题
 - [企业微信渠道](docs/WECOM_CN.md) — 企业微信配置、加密、webhook 配置、多实例。
 - [微信渠道](docs/WEIXIN_CN.md) — 微信个人号设置、扫码登录、输入提示、媒体。
 - [QQ Bot 渠道](docs/QQBOT_CN.md) — QQ Bot 设置、WebSocket 网关、群@提及、媒体上传。
+- [飞书渠道](docs/FEISHU_CN.md) — 飞书长连接、接收消息事件、访问控制。
 
 ## 架构
 
@@ -236,6 +251,7 @@ internal/
   channel/wecom/     企业微信 webhook & WebSocket 驱动
   channel/weixin/    微信个人号长轮询驱动
   channel/qqbot/     QQ Bot WebSocket 驱动
+  channel/feishu/    飞书长连接驱动
   gateway/           消息编排、工作池、斜杠命令
   codex/             原生 Codex CLI 桥接（codex exec）
   config/            配置加载（文件 + 环境变量）

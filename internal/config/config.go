@@ -25,6 +25,7 @@ type Config struct {
 	WeCom    []WeComConfig
 	Weixin   []WeixinConfig
 	QQBot    []QQBotConfig
+	Feishu   []FeishuConfig
 	Codex    CodexConfig
 }
 
@@ -79,6 +80,32 @@ type CodexConfig struct {
 type WeComGroupRule struct {
 	Enabled   *bool
 	AllowFrom []string
+}
+
+// FeishuGroupRule defines per-group access settings.
+type FeishuGroupRule struct {
+	Enabled        *bool
+	AllowFrom      []string
+	RequireMention *bool
+}
+
+// FeishuConfig controls Feishu channel integration.
+type FeishuConfig struct {
+	Name           string
+	AppID          string
+	AppSecret      string
+	BaseURL        string
+	Enabled        bool
+	TextChunkLimit int
+	DMPolicy       string
+	AllowFrom      []string
+	GroupPolicy    string
+	GroupAllowFrom []string
+	Groups         map[string]FeishuGroupRule
+	RequireMention *bool
+
+	// Per-instance SOUL content (from SOUL-<name>.md, falls back to global).
+	SoulContent string
 }
 
 // WeComConfig controls WeCom channel integration.
@@ -357,6 +384,32 @@ func Load() (*Config, error) {
 		qqNames[qq.Name] = true
 	}
 
+	// ── Feishu (multi-instance) ──
+
+	for name, raw := range fileCfg.Channels {
+		chType, _ := onboard.ChannelType(raw)
+		if chType == "feishu" {
+			var ch onboard.FeishuChannelConfig
+			if err := json.Unmarshal(raw, &ch); err != nil {
+				return nil, fmt.Errorf("channel %q: parse feishu config: %w", name, err)
+			}
+			fsCfg, err := loadFeishuFromChannel(name, ch, soulContent)
+			if err != nil {
+				return nil, fmt.Errorf("channel %q: %w", name, err)
+			}
+			cfg.Feishu = append(cfg.Feishu, *fsCfg)
+		}
+	}
+
+	// Validate Feishu instance names are unique.
+	fsNames := make(map[string]bool, len(cfg.Feishu))
+	for _, fs := range cfg.Feishu {
+		if fsNames[fs.Name] {
+			return nil, fmt.Errorf("duplicate feishu instance name %q", fs.Name)
+		}
+		fsNames[fs.Name] = true
+	}
+
 	// Validate: at least one channel must be enabled.
 	tgAnyEnabled := false
 	for _, tg := range cfg.Telegram {
@@ -386,8 +439,15 @@ func Load() (*Config, error) {
 			break
 		}
 	}
-	if !tgAnyEnabled && !wecomAnyEnabled && !weixinAnyEnabled && !qqbotAnyEnabled {
-		return nil, errors.New("at least one channel must be enabled (telegram, wecom, weixin, or qqbot)")
+	feishuAnyEnabled := false
+	for _, fs := range cfg.Feishu {
+		if fs.Enabled {
+			feishuAnyEnabled = true
+			break
+		}
+	}
+	if !tgAnyEnabled && !wecomAnyEnabled && !weixinAnyEnabled && !qqbotAnyEnabled && !feishuAnyEnabled {
+		return nil, errors.New("at least one channel must be enabled (telegram, wecom, weixin, qqbot, or feishu)")
 	}
 
 	// Telegram token is only required when Telegram is enabled.
@@ -832,6 +892,142 @@ func loadQQBotFromChannel(name string, ch onboard.QQBotChannelConfig, globalSoul
 	}
 
 	return qq
+}
+
+func loadFeishuFromChannel(name string, ch onboard.FeishuChannelConfig, globalSoul string) (*FeishuConfig, error) {
+	fs := &FeishuConfig{Name: name}
+
+	if ch.Enabled != nil {
+		fs.Enabled = *ch.Enabled
+	} else {
+		fs.Enabled = true
+	}
+	if v := strings.TrimSpace(os.Getenv("FEISHU_ENABLED")); v != "" {
+		switch strings.ToLower(v) {
+		case "true", "1":
+			fs.Enabled = true
+		case "false", "0":
+			fs.Enabled = false
+		default:
+			return nil, fmt.Errorf("invalid FEISHU_ENABLED %q: must be true or false", v)
+		}
+	}
+
+	if ch.AppID != "" {
+		resolved, err := secret.Resolve(ch.AppID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve app_id: %w", err)
+		}
+		fs.AppID = resolved
+	}
+	if v := strings.TrimSpace(os.Getenv("FEISHU_APP_ID")); v != "" {
+		fs.AppID = v
+	}
+
+	if ch.AppSecret != "" {
+		resolved, err := secret.Resolve(ch.AppSecret)
+		if err != nil {
+			return nil, fmt.Errorf("resolve app_secret: %w", err)
+		}
+		fs.AppSecret = resolved
+	}
+	if v := strings.TrimSpace(os.Getenv("FEISHU_APP_SECRET")); v != "" {
+		fs.AppSecret = v
+	}
+
+	if fs.Enabled {
+		if fs.AppID == "" {
+			return nil, errors.New("enabled but app_id is empty")
+		}
+		if fs.AppSecret == "" {
+			return nil, errors.New("enabled but app_secret is empty")
+		}
+	}
+
+	fs.BaseURL = envOr("FEISHU_BASE_URL", ch.BaseURL)
+
+	if ch.TextChunkLimit > 0 {
+		fs.TextChunkLimit = ch.TextChunkLimit
+	}
+	if v := strings.TrimSpace(os.Getenv("FEISHU_TEXT_CHUNK_LIMIT")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 100 {
+			return nil, errors.New("FEISHU_TEXT_CHUNK_LIMIT must be an integer >= 100")
+		}
+		fs.TextChunkLimit = n
+	}
+
+	dmPolicy := ch.DMPolicy
+	if dmPolicy == "" {
+		dmPolicy = "pairing"
+	}
+	dmPolicy = envOr("FEISHU_DM_POLICY", dmPolicy)
+	switch dmPolicy {
+	case "open", "pairing", "allowlist":
+	default:
+		return nil, fmt.Errorf("invalid dm_policy %q: must be open, pairing, or allowlist", dmPolicy)
+	}
+	fs.DMPolicy = dmPolicy
+
+	fs.AllowFrom = ch.AllowFrom
+	if v := strings.TrimSpace(os.Getenv("FEISHU_ALLOW_FROM")); v != "" {
+		fs.AllowFrom = parseCommaSepStrings(v)
+	}
+
+	groupPolicy := ch.GroupPolicy
+	if groupPolicy == "" {
+		groupPolicy = "allowlist"
+	}
+	groupPolicy = envOr("FEISHU_GROUP_POLICY", groupPolicy)
+	switch groupPolicy {
+	case "open", "allowlist", "disabled":
+	default:
+		return nil, fmt.Errorf("invalid group_policy %q: must be open, allowlist, or disabled", groupPolicy)
+	}
+	fs.GroupPolicy = groupPolicy
+
+	fs.GroupAllowFrom = ch.GroupAllowFrom
+	if v := strings.TrimSpace(os.Getenv("FEISHU_GROUP_ALLOW_FROM")); v != "" {
+		fs.GroupAllowFrom = parseCommaSepStrings(v)
+	}
+
+	fs.RequireMention = ch.RequireMention
+	if v := strings.TrimSpace(os.Getenv("FEISHU_REQUIRE_MENTION")); v != "" {
+		switch strings.ToLower(v) {
+		case "true", "1":
+			b := true
+			fs.RequireMention = &b
+		case "false", "0":
+			b := false
+			fs.RequireMention = &b
+		default:
+			return nil, fmt.Errorf("invalid FEISHU_REQUIRE_MENTION %q: must be true or false", v)
+		}
+	}
+	if fs.RequireMention == nil {
+		b := true
+		fs.RequireMention = &b
+	}
+
+	if ch.Groups != nil {
+		fs.Groups = make(map[string]FeishuGroupRule, len(ch.Groups))
+		for k, v := range ch.Groups {
+			fs.Groups[k] = FeishuGroupRule{
+				Enabled:        v.Enabled,
+				AllowFrom:      v.AllowFrom,
+				RequireMention: v.RequireMention,
+			}
+		}
+	}
+
+	fs.SoulContent = globalSoul
+	if instancePath, err := onboard.InstanceSoulPath(name); err == nil && instancePath != "" {
+		if data, err := os.ReadFile(instancePath); err == nil {
+			fs.SoulContent = strings.TrimSpace(string(data))
+		}
+	}
+
+	return fs, nil
 }
 
 func envOr(key, fallback string) string {

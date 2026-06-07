@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/clawdex/internal/channel"
+	"github.com/Rememorio/clawdex/internal/channel/feishu"
 	"github.com/Rememorio/clawdex/internal/channel/qqbot"
 	"github.com/Rememorio/clawdex/internal/channel/telegram"
 	"github.com/Rememorio/clawdex/internal/channel/wecom"
@@ -156,6 +157,26 @@ func RunGateway() error {
 				codexClient.SoulOverrides = make(map[string]string)
 			}
 			codexClient.SoulOverrides[wxCfg.Name] = wxCfg.SoulContent
+		}
+	}
+
+	// Populate per-instance SOUL overrides from QQ Bot configs.
+	for _, qqCfg := range cfg.QQBot {
+		if qqCfg.Enabled && qqCfg.SoulContent != "" {
+			if codexClient.SoulOverrides == nil {
+				codexClient.SoulOverrides = make(map[string]string)
+			}
+			codexClient.SoulOverrides[qqCfg.Name] = qqCfg.SoulContent
+		}
+	}
+
+	// Populate per-instance SOUL overrides from Feishu configs.
+	for _, fsCfg := range cfg.Feishu {
+		if fsCfg.Enabled && fsCfg.SoulContent != "" {
+			if codexClient.SoulOverrides == nil {
+				codexClient.SoulOverrides = make(map[string]string)
+			}
+			codexClient.SoulOverrides[fsCfg.Name] = fsCfg.SoulContent
 		}
 	}
 
@@ -332,14 +353,49 @@ func RunGateway() error {
 		logger.Info("qqbot channel enabled", "name", qqCfg.Name)
 	}
 
-	// Populate per-instance SOUL overrides from QQ Bot configs.
-	for _, qqCfg := range cfg.QQBot {
-		if qqCfg.Enabled && qqCfg.SoulContent != "" {
-			if codexClient.SoulOverrides == nil {
-				codexClient.SoulOverrides = make(map[string]string)
-			}
-			codexClient.SoulOverrides[qqCfg.Name] = qqCfg.SoulContent
+	for _, fsCfg := range cfg.Feishu {
+		if !fsCfg.Enabled {
+			logger.Info("feishu channel is disabled, skipping", "name", fsCfg.Name)
+			continue
 		}
+		if fsCfg.AppID == "" || fsCfg.AppSecret == "" {
+			logger.Warn("feishu channel missing app_id or app_secret, skipping", "name", fsCfg.Name)
+			continue
+		}
+
+		var groups map[string]feishu.GroupRule
+		if fsCfg.Groups != nil {
+			groups = make(map[string]feishu.GroupRule, len(fsCfg.Groups))
+			for k, v := range fsCfg.Groups {
+				groups[k] = feishu.GroupRule{
+					Enabled:        v.Enabled,
+					AllowFrom:      v.AllowFrom,
+					RequireMention: v.RequireMention,
+				}
+			}
+		}
+
+		fsDriver := feishu.New(feishu.Config{
+			Name:           fsCfg.Name,
+			AppID:          fsCfg.AppID,
+			AppSecret:      fsCfg.AppSecret,
+			BaseURL:        fsCfg.BaseURL,
+			TextChunkLimit: fsCfg.TextChunkLimit,
+			DMPolicy:       fsCfg.DMPolicy,
+			AllowFrom:      fsCfg.AllowFrom,
+			GroupPolicy:    fsCfg.GroupPolicy,
+			GroupAllowFrom: fsCfg.GroupAllowFrom,
+			Groups:         groups,
+			RequireMention: fsCfg.RequireMention,
+		}, pairingStore)
+
+		if fsCfg.DMPolicy == "pairing" {
+			approvers[fsCfg.Name] = &channelApprover{
+				addAllowedString: fsDriver.AddAllowedUser,
+			}
+		}
+		drivers = append(drivers, fsDriver)
+		logger.Info("feishu channel enabled", "name", fsCfg.Name)
 	}
 
 	if len(approvers) > 0 {
@@ -350,7 +406,7 @@ func RunGateway() error {
 	}
 
 	if len(drivers) == 0 {
-		return fmt.Errorf("no channel drivers enabled; enable telegram, wecom, weixin, or qqbot")
+		return fmt.Errorf("no channel drivers enabled; enable telegram, wecom, weixin, qqbot, or feishu")
 	}
 
 	httpServer := server.New(cfg.Server.Address, routes...)
