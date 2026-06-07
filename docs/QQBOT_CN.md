@@ -26,7 +26,7 @@ WebSocket 连接接收消息，并通过 REST API 发送回复和媒体。
 ```
 $ clawdex onboard
 ...
-  Choice [1/2/3/4/5]: 4
+  Choice [1/2/3/4/5/6]: 4
 
 QQ Bot
   Instance name [qqbot]:

@@ -349,6 +349,121 @@ var wecomFields = map[string]struct {
 	},
 }
 
+// feishuFieldGetter returns the value of a feishu channel field.
+type feishuFieldGetter func(*onboard.FeishuChannelConfig) string
+
+// feishuFieldSetter sets the value of a feishu channel field.
+type feishuFieldSetter func(*onboard.FeishuChannelConfig, string) error
+
+// feishuFields defines field accessors for Feishu channels.
+var feishuFields = map[string]struct {
+	get    feishuFieldGetter
+	set    feishuFieldSetter
+	secret bool
+}{
+	"type": {
+		get: func(ch *onboard.FeishuChannelConfig) string { return ch.Type },
+		set: func(ch *onboard.FeishuChannelConfig, v string) error {
+			if err := validateChoice(v, "feishu"); err != nil {
+				return err
+			}
+			ch.Type = v
+			return nil
+		},
+	},
+	"enabled": {
+		get: func(ch *onboard.FeishuChannelConfig) string { return fmtBoolPtr(ch.Enabled) },
+		set: func(ch *onboard.FeishuChannelConfig, v string) error {
+			b, err := parseBool(v)
+			if err != nil {
+				return err
+			}
+			ch.Enabled = &b
+			return nil
+		},
+	},
+	"app_id": {
+		get: func(ch *onboard.FeishuChannelConfig) string { return ch.AppID },
+		set: func(ch *onboard.FeishuChannelConfig, v string) error { ch.AppID = v; return nil },
+	},
+	"app_secret": {
+		get:    func(ch *onboard.FeishuChannelConfig) string { return ch.AppSecret },
+		set:    func(ch *onboard.FeishuChannelConfig, v string) error { ch.AppSecret = v; return nil },
+		secret: true,
+	},
+	"base_url": {
+		get: func(ch *onboard.FeishuChannelConfig) string { return ch.BaseURL },
+		set: func(ch *onboard.FeishuChannelConfig, v string) error { ch.BaseURL = v; return nil },
+	},
+	"dm_policy": {
+		get: func(ch *onboard.FeishuChannelConfig) string { return ch.DMPolicy },
+		set: func(ch *onboard.FeishuChannelConfig, v string) error {
+			if err := validateChoice(v, "open", "pairing", "allowlist"); err != nil {
+				return err
+			}
+			ch.DMPolicy = v
+			return nil
+		},
+	},
+	"allow_from": {
+		get: func(ch *onboard.FeishuChannelConfig) string { return fmtStringSlice(ch.AllowFrom) },
+		set: func(ch *onboard.FeishuChannelConfig, v string) error {
+			ch.AllowFrom = parseCommaSepStrings(v)
+			return nil
+		},
+	},
+	"group_policy": {
+		get: func(ch *onboard.FeishuChannelConfig) string { return ch.GroupPolicy },
+		set: func(ch *onboard.FeishuChannelConfig, v string) error {
+			if err := validateChoice(v, "open", "allowlist", "disabled"); err != nil {
+				return err
+			}
+			ch.GroupPolicy = v
+			return nil
+		},
+	},
+	"group_allow_from": {
+		get: func(ch *onboard.FeishuChannelConfig) string { return fmtStringSlice(ch.GroupAllowFrom) },
+		set: func(ch *onboard.FeishuChannelConfig, v string) error {
+			ch.GroupAllowFrom = parseCommaSepStrings(v)
+			return nil
+		},
+	},
+	"groups": {
+		get: func(ch *onboard.FeishuChannelConfig) string { return fmtJSON(ch.Groups) },
+		set: func(ch *onboard.FeishuChannelConfig, v string) error {
+			var groups map[string]onboard.FeishuGroupRule
+			if err := json.Unmarshal([]byte(v), &groups); err != nil {
+				return fmt.Errorf("invalid JSON: %w", err)
+			}
+			ch.Groups = groups
+			return nil
+		},
+	},
+	"require_mention": {
+		get: func(ch *onboard.FeishuChannelConfig) string { return fmtBoolPtr(ch.RequireMention) },
+		set: func(ch *onboard.FeishuChannelConfig, v string) error {
+			b, err := parseBool(v)
+			if err != nil {
+				return err
+			}
+			ch.RequireMention = &b
+			return nil
+		},
+	},
+	"text_chunk_limit": {
+		get: func(ch *onboard.FeishuChannelConfig) string { return fmtInt(ch.TextChunkLimit) },
+		set: func(ch *onboard.FeishuChannelConfig, v string) error {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("invalid integer: %s", v)
+			}
+			ch.TextChunkLimit = n
+			return nil
+		},
+	},
+}
+
 // parseChannelKey parses a key like "channels.telegram.bot_token" or
 // "channels.my-wecom.token" into (channelName, fieldName, ok).
 // channelName may be "*" for wildcard operations.
@@ -427,12 +542,19 @@ func configSetChannel(key, value string) error {
 		// Infer type from field name.
 		if _, isTelegram := telegramFields[fieldName]; isTelegram {
 			if _, isWecom := wecomFields[fieldName]; isWecom {
-				// Field exists in both - this shouldn't happen with our design.
+				return fmt.Errorf("ambiguous field %q exists in multiple channel types", fieldName)
+			}
+			if _, isFeishu := feishuFields[fieldName]; isFeishu {
 				return fmt.Errorf("ambiguous field %q exists in multiple channel types", fieldName)
 			}
 			chType = "telegram"
 		} else if _, isWecom := wecomFields[fieldName]; isWecom {
+			if _, isFeishu := feishuFields[fieldName]; isFeishu {
+				return fmt.Errorf("ambiguous field %q exists in multiple channel types", fieldName)
+			}
 			chType = "wecom"
+		} else if _, isFeishu := feishuFields[fieldName]; isFeishu {
+			chType = "feishu"
 		} else {
 			return fmt.Errorf("unknown channel field: %s", fieldName)
 		}
@@ -483,6 +605,28 @@ func configSetChannel(key, value string) error {
 		}
 		cfg.Channels[channelName] = data
 
+	case "feishu":
+		var ch onboard.FeishuChannelConfig
+		if exists && len(raw) > 0 {
+			if err := json.Unmarshal(raw, &ch); err != nil {
+				return fmt.Errorf("parse feishu config: %w", err)
+			}
+		} else {
+			ch.Type = "feishu"
+		}
+		entry, ok := feishuFields[fieldName]
+		if !ok {
+			return fmt.Errorf("unknown feishu field: %s", fieldName)
+		}
+		if err := entry.set(&ch, value); err != nil {
+			return fmt.Errorf("invalid value for %s: %w", key, err)
+		}
+		data, err := json.Marshal(ch)
+		if err != nil {
+			return fmt.Errorf("marshal feishu config: %w", err)
+		}
+		cfg.Channels[channelName] = data
+
 	default:
 		return fmt.Errorf("unknown channel type: %s", chType)
 	}
@@ -504,8 +648,9 @@ func configSetChannelWildcard(cfg *onboard.FileConfig, fieldName, value string) 
 
 	telegramEntry, isTelegram := telegramFields[fieldName]
 	wecomEntry, isWecom := wecomFields[fieldName]
+	feishuEntry, isFeishu := feishuFields[fieldName]
 
-	if !isTelegram && !isWecom {
+	if !isTelegram && !isWecom && !isFeishu {
 		return fmt.Errorf("unknown channel field: %s", fieldName)
 	}
 
@@ -551,6 +696,25 @@ func configSetChannelWildcard(cfg *onboard.FileConfig, fieldName, value string) 
 			data, err := json.Marshal(ch)
 			if err != nil {
 				return fmt.Errorf("marshal wecom config: %w", err)
+			}
+			cfg.Channels[name] = data
+			updated = append(updated, name)
+
+		case "feishu":
+			if !isFeishu {
+				continue
+			}
+			var ch onboard.FeishuChannelConfig
+			if err := json.Unmarshal(raw, &ch); err != nil {
+				continue
+			}
+			if err := feishuEntry.set(&ch, value); err != nil {
+				skipped = append(skipped, name)
+				continue
+			}
+			data, err := json.Marshal(ch)
+			if err != nil {
+				return fmt.Errorf("marshal feishu config: %w", err)
 			}
 			cfg.Channels[name] = data
 			updated = append(updated, name)
@@ -648,6 +812,17 @@ func configGetChannel(key string) error {
 		}
 		fmt.Println(entry.get(&ch))
 
+	case "feishu":
+		var ch onboard.FeishuChannelConfig
+		if err := json.Unmarshal(raw, &ch); err != nil {
+			return fmt.Errorf("parse feishu config: %w", err)
+		}
+		entry, ok := feishuFields[fieldName]
+		if !ok {
+			return fmt.Errorf("unknown feishu field: %s", fieldName)
+		}
+		fmt.Println(entry.get(&ch))
+
 	default:
 		return fmt.Errorf("unknown channel type: %s", chType)
 	}
@@ -664,8 +839,9 @@ func configGetChannelWildcard(cfg *onboard.FileConfig, fieldName string) error {
 
 	telegramEntry, isTelegram := telegramFields[fieldName]
 	wecomEntry, isWecom := wecomFields[fieldName]
+	feishuEntry, isFeishu := feishuFields[fieldName]
 
-	if !isTelegram && !isWecom {
+	if !isTelegram && !isWecom && !isFeishu {
 		return fmt.Errorf("unknown channel field: %s", fieldName)
 	}
 
@@ -699,6 +875,16 @@ func configGetChannelWildcard(cfg *onboard.FileConfig, fieldName string) error {
 				continue
 			}
 			results = append(results, result{name: name, value: wecomEntry.get(&ch)})
+
+		case "feishu":
+			if !isFeishu {
+				continue
+			}
+			var ch onboard.FeishuChannelConfig
+			if err := json.Unmarshal(raw, &ch); err != nil {
+				continue
+			}
+			results = append(results, result{name: name, value: feishuEntry.get(&ch)})
 		}
 	}
 
@@ -793,6 +979,28 @@ func ConfigList() error {
 				sort.Strings(fieldNames)
 				for _, f := range fieldNames {
 					entry := wecomFields[f]
+					val := entry.get(&ch)
+					if entry.secret && val != "" {
+						val = secret.Describe(val)
+					}
+					if val == "" {
+						val = "(not set)"
+					}
+					fmt.Printf("%-40s %s\n", prefix+"."+f, val)
+				}
+
+			case "feishu":
+				var ch onboard.FeishuChannelConfig
+				if err := json.Unmarshal(raw, &ch); err != nil {
+					continue
+				}
+				fieldNames := make([]string, 0, len(feishuFields))
+				for f := range feishuFields {
+					fieldNames = append(fieldNames, f)
+				}
+				sort.Strings(fieldNames)
+				for _, f := range fieldNames {
+					entry := feishuFields[f]
 					val := entry.get(&ch)
 					if entry.secret && val != "" {
 						val = secret.Describe(val)

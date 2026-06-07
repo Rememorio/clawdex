@@ -53,6 +53,15 @@ func wcChannel(opts ...func(*onboard.WeComChannelConfig)) json.RawMessage {
 	return onboard.MarshalWeComChannel(*ch)
 }
 
+// fsChannel creates a feishu channel config as json.RawMessage.
+func fsChannel(opts ...func(*onboard.FeishuChannelConfig)) json.RawMessage {
+	ch := &onboard.FeishuChannelConfig{Type: "feishu"}
+	for _, opt := range opts {
+		opt(ch)
+	}
+	return onboard.MarshalFeishuChannel(*ch)
+}
+
 func TestLoad_PlainToken(t *testing.T) {
 	writeTestConfig(t, &onboard.FileConfig{
 		Channels: map[string]json.RawMessage{
@@ -65,6 +74,53 @@ func TestLoad_PlainToken(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 	assert.Equal(t, "123456:plain-token", firstTelegram(t, cfg).BotToken)
+}
+
+func TestLoad_FeishuChannel(t *testing.T) {
+	enabled := true
+	groupEnabled := true
+	groupRequireMention := false
+	writeTestConfig(t, &onboard.FileConfig{
+		Channels: map[string]json.RawMessage{
+			"fs-main": fsChannel(func(ch *onboard.FeishuChannelConfig) {
+				ch.Enabled = &enabled
+				ch.AppID = "cli_test"
+				ch.AppSecret = "secret"
+				ch.DMPolicy = "allowlist"
+				ch.AllowFrom = []string{"ou_user"}
+				ch.GroupPolicy = "allowlist"
+				ch.GroupAllowFrom = []string{"oc_group"}
+				ch.TextChunkLimit = 3500
+				ch.Groups = map[string]onboard.FeishuGroupRule{
+					"oc_group": {
+						Enabled:        &groupEnabled,
+						AllowFrom:      []string{"ou_user"},
+						RequireMention: &groupRequireMention,
+					},
+				}
+			}),
+		},
+	})
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Len(t, cfg.Feishu, 1)
+	fs := cfg.Feishu[0]
+	assert.Equal(t, "fs-main", fs.Name)
+	assert.Equal(t, "cli_test", fs.AppID)
+	assert.Equal(t, "secret", fs.AppSecret)
+	assert.True(t, fs.Enabled)
+	assert.Equal(t, "allowlist", fs.DMPolicy)
+	assert.Equal(t, []string{"ou_user"}, fs.AllowFrom)
+	assert.Equal(t, "allowlist", fs.GroupPolicy)
+	assert.Equal(t, []string{"oc_group"}, fs.GroupAllowFrom)
+	assert.Equal(t, 3500, fs.TextChunkLimit)
+	require.NotNil(t, fs.RequireMention)
+	assert.True(t, *fs.RequireMention)
+	require.Contains(t, fs.Groups, "oc_group")
+	assert.Equal(t, []string{"ou_user"}, fs.Groups["oc_group"].AllowFrom)
+	require.NotNil(t, fs.Groups["oc_group"].RequireMention)
+	assert.False(t, *fs.Groups["oc_group"].RequireMention)
 }
 
 func TestLoad_EnvRefToken(t *testing.T) {

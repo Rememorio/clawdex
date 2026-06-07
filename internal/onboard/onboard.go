@@ -161,6 +161,29 @@ type QQBotChannelConfig struct {
 	TextChunkLimit int      `json:"text_chunk_limit,omitempty"`
 }
 
+// FeishuChannelConfig represents a Feishu bot channel configuration.
+type FeishuChannelConfig struct {
+	Type           string                     `json:"type"`
+	Enabled        *bool                      `json:"enabled,omitempty"`
+	AppID          string                     `json:"app_id,omitempty"`
+	AppSecret      string                     `json:"app_secret,omitempty"`
+	BaseURL        string                     `json:"base_url,omitempty"`
+	DMPolicy       string                     `json:"dm_policy,omitempty"`
+	AllowFrom      []string                   `json:"allow_from"`
+	GroupPolicy    string                     `json:"group_policy,omitempty"`
+	GroupAllowFrom []string                   `json:"group_allow_from"`
+	Groups         map[string]FeishuGroupRule `json:"groups,omitempty"`
+	RequireMention *bool                      `json:"require_mention,omitempty"`
+	TextChunkLimit int                        `json:"text_chunk_limit,omitempty"`
+}
+
+// FeishuGroupRule defines per-group access settings for the config file.
+type FeishuGroupRule struct {
+	Enabled        *bool    `json:"enabled,omitempty"`
+	AllowFrom      []string `json:"allow_from,omitempty"`
+	RequireMention *bool    `json:"require_mention,omitempty"`
+}
+
 // channelTypeMeta is used to extract the type field from raw JSON.
 type channelTypeMeta struct {
 	Type string `json:"type"`
@@ -195,6 +218,12 @@ func ParseChannelConfig(raw json.RawMessage) (any, error) {
 		var cfg QQBotChannelConfig
 		if err := json.Unmarshal(raw, &cfg); err != nil {
 			return nil, fmt.Errorf("parse qqbot config: %w", err)
+		}
+		return cfg, nil
+	case "feishu":
+		var cfg FeishuChannelConfig
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			return nil, fmt.Errorf("parse feishu config: %w", err)
 		}
 		return cfg, nil
 	default:
@@ -238,6 +267,18 @@ func MarshalWeComChannel(cfg WeComChannelConfig) json.RawMessage {
 
 // MarshalWeixinChannel marshals a WeixinChannelConfig to json.RawMessage.
 func MarshalWeixinChannel(cfg WeixinChannelConfig) json.RawMessage {
+	data, _ := json.Marshal(cfg)
+	return data
+}
+
+// MarshalQQBotChannel marshals a QQBotChannelConfig to json.RawMessage.
+func MarshalQQBotChannel(cfg QQBotChannelConfig) json.RawMessage {
+	data, _ := json.Marshal(cfg)
+	return data
+}
+
+// MarshalFeishuChannel marshals a FeishuChannelConfig to json.RawMessage.
+func MarshalFeishuChannel(cfg FeishuChannelConfig) json.RawMessage {
 	data, _ := json.Marshal(cfg)
 	return data
 }
@@ -453,6 +494,13 @@ func applyChannelDefaults(cfg *FileConfig) error {
 			}
 			applyWeixinDefaults(&ch)
 			cfg.Channels[name] = MarshalWeixinChannel(ch)
+		case "feishu":
+			var ch FeishuChannelConfig
+			if err := json.Unmarshal(raw, &ch); err != nil {
+				return fmt.Errorf("channel %q: parse feishu config: %w", name, err)
+			}
+			applyFeishuDefaults(&ch)
+			cfg.Channels[name] = MarshalFeishuChannel(ch)
 		}
 	}
 	return nil
@@ -536,6 +584,38 @@ func applyWeixinDefaults(ch *WeixinChannelConfig) {
 	}
 	if ch.AllowFrom == nil {
 		ch.AllowFrom = []string{}
+	}
+	if ch.TextChunkLimit == 0 {
+		ch.TextChunkLimit = 4000
+	}
+}
+
+func applyFeishuDefaults(ch *FeishuChannelConfig) {
+	if ch == nil {
+		return
+	}
+	if ch.Type == "" {
+		ch.Type = "feishu"
+	}
+	if ch.Enabled == nil {
+		enabled := true
+		ch.Enabled = &enabled
+	}
+	if ch.DMPolicy == "" {
+		ch.DMPolicy = "pairing"
+	}
+	if ch.AllowFrom == nil {
+		ch.AllowFrom = []string{}
+	}
+	if ch.GroupPolicy == "" {
+		ch.GroupPolicy = "allowlist"
+	}
+	if ch.GroupAllowFrom == nil {
+		ch.GroupAllowFrom = []string{}
+	}
+	if ch.RequireMention == nil {
+		requireMention := true
+		ch.RequireMention = &requireMention
 	}
 	if ch.TextChunkLimit == 0 {
 		ch.TextChunkLimit = 4000
@@ -672,6 +752,7 @@ func configureChannelsLoop(reader *bufio.Reader, cfg *FileConfig, telegramBaseUR
 		wcCount := 0
 		wxCount := 0
 		qqCount := 0
+		fsCount := 0
 		for _, raw := range cfg.Channels {
 			chType, _ := ChannelType(raw)
 			switch chType {
@@ -683,6 +764,8 @@ func configureChannelsLoop(reader *bufio.Reader, cfg *FileConfig, telegramBaseUR
 				wxCount++
 			case "qqbot":
 				qqCount++
+			case "feishu":
+				fsCount++
 			}
 		}
 
@@ -700,7 +783,10 @@ func configureChannelsLoop(reader *bufio.Reader, cfg *FileConfig, telegramBaseUR
 		if qqCount > 0 {
 			fmt.Printf("    • QQ Bot: %s\n", green(fmt.Sprintf("%d instance(s)", qqCount)))
 		}
-		if tgCount == 0 && wcCount == 0 && wxCount == 0 && qqCount == 0 {
+		if fsCount > 0 {
+			fmt.Printf("    • Feishu: %s\n", green(fmt.Sprintf("%d instance(s)", fsCount)))
+		}
+		if tgCount == 0 && wcCount == 0 && wxCount == 0 && qqCount == 0 && fsCount == 0 {
 			fmt.Printf("    %s\n", dim("(none)"))
 		}
 
@@ -711,10 +797,11 @@ func configureChannelsLoop(reader *bufio.Reader, cfg *FileConfig, telegramBaseUR
 		fmt.Println("      3. Add Weixin instance")
 		fmt.Println("      4. Add QQ Bot instance")
 		fmt.Println("      5. Done")
+		fmt.Println("      6. Add Feishu instance")
 		fmt.Println()
 
-		choice, err := promptChoice(reader, "Choice [1/2/3/4/5]", "1", map[string]bool{
-			"1": true, "2": true, "3": true, "4": true, "5": true,
+		choice, err := promptChoice(reader, "Choice [1/2/3/4/5/6]", "1", map[string]bool{
+			"1": true, "2": true, "3": true, "4": true, "5": true, "6": true,
 		})
 		if err != nil {
 			return err
@@ -739,6 +826,10 @@ func configureChannelsLoop(reader *bufio.Reader, cfg *FileConfig, telegramBaseUR
 			}
 		case "5":
 			return nil
+		case "6":
+			if err := addFeishuInstance(reader, cfg); err != nil {
+				return err
+			}
 		}
 
 		fmt.Println()
@@ -1031,6 +1122,76 @@ func addQQBotInstance(reader *bufio.Reader, cfg *FileConfig) error {
 	fmt.Println()
 	fmt.Printf("  %s QQ Bot %q configured\n", green("✓"), name)
 	fmt.Printf("  %s DM policy set to %s, group policy set to %s\n", dim("ℹ"), bold("open"), bold("open"))
+
+	return nil
+}
+
+// addFeishuInstance adds a single Feishu bot instance interactively.
+func addFeishuInstance(reader *bufio.Reader, cfg *FileConfig) error {
+	fmt.Println()
+	fmt.Println(bold("Feishu"))
+
+	fsCount := 0
+	for _, raw := range cfg.Channels {
+		chType, _ := ChannelType(raw)
+		if chType == "feishu" {
+			fsCount++
+		}
+	}
+
+	defaultName := "feishu"
+	if fsCount > 0 {
+		defaultName = fmt.Sprintf("feishu-%d", fsCount+1)
+	}
+
+	name, err := prompt(reader, "Instance name", defaultName)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Printf("  %s\n", dim("Get App ID and App Secret from Feishu Open Platform → Credentials & Basic Info"))
+	fmt.Printf("  %s\n", dim("Events & Callbacks should use long connection and subscribe to im.message.receive_v1"))
+	fmt.Println()
+
+	appID, err := promptSecret(reader, "App ID", "FEISHU_APP_ID", "")
+	if err != nil {
+		return err
+	}
+	if appID == "" {
+		return fmt.Errorf("app_id is required")
+	}
+
+	appSecret, err := promptSecret(reader, "App Secret", "FEISHU_APP_SECRET", "")
+	if err != nil {
+		return err
+	}
+	if appSecret == "" {
+		return fmt.Errorf("app_secret is required")
+	}
+
+	t := true
+	requireMention := true
+	ch := FeishuChannelConfig{
+		Type:           "feishu",
+		Enabled:        &t,
+		AppID:          appID,
+		AppSecret:      appSecret,
+		DMPolicy:       "pairing",
+		GroupPolicy:    "allowlist",
+		AllowFrom:      []string{},
+		GroupAllowFrom: []string{},
+		RequireMention: &requireMention,
+		TextChunkLimit: 4000,
+	}
+
+	data, _ := json.Marshal(ch)
+	cfg.Channels[name] = data
+
+	fmt.Println()
+	fmt.Printf("  %s Feishu %q configured (long connection)\n", green("✓"), name)
+	fmt.Printf("  %s No callback URL needed — bot connects outbound via WebSocket\n", dim("ℹ"))
+	fmt.Printf("  %s DM policy defaults to %s; groups require @bot and an allowlist by default\n", dim("ℹ"), bold("pairing"))
 
 	return nil
 }
