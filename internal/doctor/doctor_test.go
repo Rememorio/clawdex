@@ -25,6 +25,14 @@ func tgChannel(opts ...func(*onboard.TelegramChannelConfig)) json.RawMessage {
 	return onboard.MarshalTelegramChannel(*ch)
 }
 
+func fsChannel(opts ...func(*onboard.FeishuChannelConfig)) json.RawMessage {
+	ch := &onboard.FeishuChannelConfig{Type: "feishu"}
+	for _, opt := range opts {
+		opt(ch)
+	}
+	return onboard.MarshalFeishuChannel(*ch)
+}
+
 func TestCheckConfigSyntax_ValidJSON(t *testing.T) {
 	ResetState()
 	defer ResetState()
@@ -429,6 +437,75 @@ func TestCheckBotTokenResolves_PlainToken(t *testing.T) {
 
 	c := checkBotTokenResolves(false)
 	assert.Equal(t, Pass, c.Status)
+}
+
+func TestCheckChannelCredentialsResolve_Feishu(t *testing.T) {
+	ResetState()
+	defer ResetState()
+
+	loadedConfig = &onboard.FileConfig{
+		Channels: map[string]json.RawMessage{
+			"feishu": fsChannel(func(ch *onboard.FeishuChannelConfig) {
+				ch.AppID = "cli_test"
+				ch.AppSecret = "secret"
+			}),
+		},
+	}
+
+	c := checkChannelCredentialsResolve(false)
+	assert.Equal(t, Pass, c.Status)
+	assert.Contains(t, c.Message, "feishu")
+}
+
+func TestCheckChannelCredentialsResolve_FeishuMissingSecret(t *testing.T) {
+	ResetState()
+	defer ResetState()
+
+	loadedConfig = &onboard.FileConfig{
+		Channels: map[string]json.RawMessage{
+			"feishu": fsChannel(func(ch *onboard.FeishuChannelConfig) {
+				ch.AppID = "cli_test"
+			}),
+		},
+	}
+
+	c := checkChannelCredentialsResolve(false)
+	assert.Equal(t, Fail, c.Status)
+	assert.Contains(t, c.Message, "app_id and app_secret")
+}
+
+func TestCheckChannelCredentialsValid_Feishu(t *testing.T) {
+	ResetState()
+	defer ResetState()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"code":0,"msg":"ok","tenant_access_token":"tenant-token"}`)
+		case "/open-apis/bot/v3/info":
+			assert.Equal(t, "Bearer tenant-token", r.Header.Get("Authorization"))
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"code":0,"msg":"ok","bot":{"app_name":"Eyjafjalla","open_id":"ou_bot"}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	loadedConfig = &onboard.FileConfig{
+		Channels: map[string]json.RawMessage{
+			"feishu": fsChannel(func(ch *onboard.FeishuChannelConfig) {
+				ch.AppID = "cli_test"
+				ch.AppSecret = "secret"
+				ch.BaseURL = ts.URL
+			}),
+		},
+	}
+
+	c := checkChannelCredentialsValid(false)
+	assert.Equal(t, Pass, c.Status)
+	assert.Contains(t, c.Message, "Eyjafjalla")
 }
 
 func TestCheckStreaming_Empty(t *testing.T) {

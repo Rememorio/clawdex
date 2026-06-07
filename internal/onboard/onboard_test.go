@@ -1456,6 +1456,31 @@ func TestApplyChannelDefaults_QQBot(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestApplyChannelDefaults_Feishu(t *testing.T) {
+	cfg := &FileConfig{
+		Channels: map[string]json.RawMessage{
+			"fs": json.RawMessage(`{"type":"feishu","app_id":"cli_test","app_secret":"sec"}`),
+		},
+	}
+
+	err := applyChannelDefaults(cfg)
+	require.NoError(t, err)
+
+	parsed, err := ParseChannelConfig(cfg.Channels["fs"])
+	require.NoError(t, err)
+	fs, ok := parsed.(FeishuChannelConfig)
+	require.True(t, ok)
+	require.NotNil(t, fs.Enabled)
+	assert.True(t, *fs.Enabled)
+	assert.Equal(t, "pairing", fs.DMPolicy)
+	assert.Equal(t, "allowlist", fs.GroupPolicy)
+	assert.Equal(t, []string{}, fs.AllowFrom)
+	assert.Equal(t, []string{}, fs.GroupAllowFrom)
+	require.NotNil(t, fs.RequireMention)
+	assert.True(t, *fs.RequireMention)
+	assert.Equal(t, 4000, fs.TextChunkLimit)
+}
+
 // ── QQ Bot onboard wizard test ──
 
 func TestRunWithBaseURL_QQBotOnly(t *testing.T) {
@@ -1482,6 +1507,33 @@ func TestRunWithBaseURL_QQBotOnly(t *testing.T) {
 	assert.True(t, *qq.Enabled)
 	assert.Equal(t, "open", qq.DMPolicy)
 	assert.Equal(t, "open", qq.GroupPolicy)
+}
+
+func TestRunWithBaseURL_FeishuOnly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	setupFakeCodex(t)
+
+	simulateStdin(t, "6\n\n2\ncli_test\n2\nsecret\n5\n")
+
+	err := runWithBaseURL("http://unused/bot")
+	require.NoError(t, err)
+
+	cfg, err := LoadFileConfig()
+	require.NoError(t, err)
+	require.Len(t, cfg.Channels, 1)
+
+	parsed, err := ParseChannelConfig(cfg.Channels["feishu"])
+	require.NoError(t, err)
+	fs, ok := parsed.(FeishuChannelConfig)
+	require.True(t, ok)
+	assert.Equal(t, "cli_test", fs.AppID)
+	assert.Equal(t, "secret", fs.AppSecret)
+	require.NotNil(t, fs.Enabled)
+	assert.True(t, *fs.Enabled)
+	assert.Equal(t, "pairing", fs.DMPolicy)
+	assert.Equal(t, "allowlist", fs.GroupPolicy)
+	require.NotNil(t, fs.RequireMention)
+	assert.True(t, *fs.RequireMention)
 }
 
 // ── MarshalQQBotChannel tests ──

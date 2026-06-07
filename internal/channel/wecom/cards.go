@@ -3,6 +3,7 @@ package wecom
 import (
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/Rememorio/clawdex/internal/channel"
@@ -13,9 +14,11 @@ const (
 	cardSessionQuestionKey = "session_select"
 )
 
+var sessionCardTaskSeq atomic.Uint64
+
 // newSessionCardTaskID generates a unique task ID for the card.
 func newSessionCardTaskID(chatID int64) string {
-	return fmt.Sprintf("sessions-%d-%d", chatID, time.Now().UnixNano())
+	return fmt.Sprintf("sessions-%d-%d-%d", chatID, time.Now().UnixNano(), sessionCardTaskSeq.Add(1))
 }
 
 // buildSessionTemplateCard converts a channel.SessionCard into a WeCom

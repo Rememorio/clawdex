@@ -2,6 +2,7 @@
 package doctor
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,8 +62,8 @@ func Run(opts ...RunOption) []Check {
 	checks := []checkFunc{
 		checkConfigExists,
 		checkConfigSyntax,
-		checkBotTokenResolves,
-		checkBotTokenValid,
+		checkChannelCredentialsResolve,
+		checkChannelCredentialsValid,
 		checkCodexCLI,
 		checkWorkDir,
 		checkSandbox,
@@ -183,6 +184,212 @@ func checkBotTokenValid(fix bool) Check {
 	return Check{Name: "Bot verified", Status: Pass, Message: fmt.Sprintf("@%s (id: %d)", info.Username, info.ID)}
 }
 
+func checkChannelCredentialsResolve(fix bool) Check {
+	cfg, _, err := ensureConfig()
+	if err != nil {
+		return Check{Name: "Channel credentials", Status: Fail, Message: err.Error()}
+	}
+	enabled, err := enabledChannelCredentials(cfg, true)
+	if err != nil {
+		return Check{Name: "Channel credentials", Status: Fail, Message: err.Error()}
+	}
+	if len(enabled) == 0 {
+		return Check{Name: "Channel credentials", Status: Fail, Message: "no enabled channels configured"}
+	}
+	return Check{Name: "Channel credentials", Status: Pass, Message: strings.Join(enabled, ", ")}
+}
+
+func checkChannelCredentialsValid(fix bool) Check {
+	cfg, _, err := ensureConfig()
+	if err != nil {
+		return Check{Name: "Channel verified", Status: Fail, Message: err.Error()}
+	}
+	channels, err := enabledChannelCredentials(cfg, false)
+	if err != nil {
+		return Check{Name: "Channel verified", Status: Fail, Message: err.Error()}
+	}
+	if len(channels) == 0 {
+		return Check{Name: "Channel verified", Status: Fail, Message: "no enabled channels configured"}
+	}
+
+	var verified []string
+	var unchecked []string
+	for _, raw := range cfg.Channels {
+		chType, _ := onboard.ChannelType(raw)
+		switch chType {
+		case "telegram":
+			var ch onboard.TelegramChannelConfig
+			if err := json.Unmarshal(raw, &ch); err != nil || !enabled(ch.Enabled) {
+				continue
+			}
+			token, err := secret.Resolve(ch.BotToken)
+			if err != nil {
+				return Check{Name: "Channel verified", Status: Fail, Message: "telegram token does not resolve"}
+			}
+			info, err := verifyBotToken(token)
+			if err != nil {
+				return Check{Name: "Channel verified", Status: Fail, Message: err.Error()}
+			}
+			verified = append(verified, fmt.Sprintf("telegram @%s (id: %d)", info.Username, info.ID))
+		case "feishu":
+			var ch onboard.FeishuChannelConfig
+			if err := json.Unmarshal(raw, &ch); err != nil || !enabled(ch.Enabled) {
+				continue
+			}
+			appID, err := secret.Resolve(ch.AppID)
+			if err != nil {
+				return Check{Name: "Channel verified", Status: Fail, Message: "feishu app_id does not resolve"}
+			}
+			appSecret, err := secret.Resolve(ch.AppSecret)
+			if err != nil {
+				return Check{Name: "Channel verified", Status: Fail, Message: "feishu app_secret does not resolve"}
+			}
+			botName, err := verifyFeishuCredentials(ch.BaseURL, appID, appSecret)
+			if err != nil {
+				return Check{Name: "Channel verified", Status: Fail, Message: err.Error()}
+			}
+			if botName == "" {
+				botName = "bot"
+			}
+			verified = append(verified, "feishu "+botName)
+		case "wecom", "weixin", "qqbot":
+			unchecked = append(unchecked, chType)
+		}
+	}
+	if len(verified) > 0 {
+		return Check{Name: "Channel verified", Status: Pass, Message: strings.Join(verified, ", ")}
+	}
+	if len(unchecked) > 0 {
+		return Check{Name: "Channel verified", Status: Pass, Message: "remote verification not available for " + strings.Join(unchecked, ", ")}
+	}
+	return Check{Name: "Channel verified", Status: Warn, Message: "no remotely verifiable channels enabled"}
+}
+
+func enabledChannelCredentials(cfg *onboard.FileConfig, resolve bool) ([]string, error) {
+	if cfg == nil || len(cfg.Channels) == 0 {
+		return nil, nil
+	}
+
+	var res []string
+	for name, raw := range cfg.Channels {
+		chType, err := onboard.ChannelType(raw)
+		if err != nil {
+			return nil, fmt.Errorf("channel %q: %w", name, err)
+		}
+		switch chType {
+		case "telegram":
+			var ch onboard.TelegramChannelConfig
+			if err := json.Unmarshal(raw, &ch); err != nil {
+				return nil, fmt.Errorf("channel %q: parse telegram config: %w", name, err)
+			}
+			if !enabled(ch.Enabled) {
+				continue
+			}
+			if strings.TrimSpace(ch.BotToken) == "" {
+				return nil, fmt.Errorf("telegram channel %q: bot_token not set", name)
+			}
+			if resolve {
+				if _, err := secret.Resolve(ch.BotToken); err != nil {
+					return nil, fmt.Errorf("telegram channel %q: %w", name, err)
+				}
+			}
+			res = append(res, name+" (telegram)")
+		case "wecom":
+			var ch onboard.WeComChannelConfig
+			if err := json.Unmarshal(raw, &ch); err != nil {
+				return nil, fmt.Errorf("channel %q: parse wecom config: %w", name, err)
+			}
+			if !enabled(ch.Enabled) {
+				continue
+			}
+			if strings.TrimSpace(ch.ConnectionMode) == "websocket" {
+				if strings.TrimSpace(ch.BotID) == "" || strings.TrimSpace(ch.Secret) == "" {
+					return nil, fmt.Errorf("wecom channel %q: botid and secret are required in websocket mode", name)
+				}
+				if resolve {
+					if _, err := secret.Resolve(ch.Secret); err != nil {
+						return nil, fmt.Errorf("wecom channel %q: %w", name, err)
+					}
+				}
+			} else if strings.TrimSpace(ch.Token) == "" || strings.TrimSpace(ch.EncodingAESKey) == "" {
+				return nil, fmt.Errorf("wecom channel %q: token and encoding_aes_key are required", name)
+			} else if resolve {
+				if _, err := secret.Resolve(ch.Token); err != nil {
+					return nil, fmt.Errorf("wecom channel %q: %w", name, err)
+				}
+				if _, err := secret.Resolve(ch.EncodingAESKey); err != nil {
+					return nil, fmt.Errorf("wecom channel %q: %w", name, err)
+				}
+			}
+			res = append(res, name+" (wecom)")
+		case "weixin":
+			var ch onboard.WeixinChannelConfig
+			if err := json.Unmarshal(raw, &ch); err != nil {
+				return nil, fmt.Errorf("channel %q: parse weixin config: %w", name, err)
+			}
+			if !enabled(ch.Enabled) {
+				continue
+			}
+			if strings.TrimSpace(ch.Token) == "" {
+				return nil, fmt.Errorf("weixin channel %q: token not set", name)
+			}
+			if resolve {
+				if _, err := secret.Resolve(ch.Token); err != nil {
+					return nil, fmt.Errorf("weixin channel %q: %w", name, err)
+				}
+			}
+			res = append(res, name+" (weixin)")
+		case "qqbot":
+			var ch onboard.QQBotChannelConfig
+			if err := json.Unmarshal(raw, &ch); err != nil {
+				return nil, fmt.Errorf("channel %q: parse qqbot config: %w", name, err)
+			}
+			if !enabled(ch.Enabled) {
+				continue
+			}
+			if strings.TrimSpace(ch.AppID) == "" || strings.TrimSpace(ch.ClientSecret) == "" {
+				return nil, fmt.Errorf("qqbot channel %q: app_id and client_secret are required", name)
+			}
+			if resolve {
+				if _, err := secret.Resolve(ch.AppID); err != nil {
+					return nil, fmt.Errorf("qqbot channel %q: %w", name, err)
+				}
+				if _, err := secret.Resolve(ch.ClientSecret); err != nil {
+					return nil, fmt.Errorf("qqbot channel %q: %w", name, err)
+				}
+			}
+			res = append(res, name+" (qqbot)")
+		case "feishu":
+			var ch onboard.FeishuChannelConfig
+			if err := json.Unmarshal(raw, &ch); err != nil {
+				return nil, fmt.Errorf("channel %q: parse feishu config: %w", name, err)
+			}
+			if !enabled(ch.Enabled) {
+				continue
+			}
+			if strings.TrimSpace(ch.AppID) == "" || strings.TrimSpace(ch.AppSecret) == "" {
+				return nil, fmt.Errorf("feishu channel %q: app_id and app_secret are required", name)
+			}
+			if resolve {
+				if _, err := secret.Resolve(ch.AppID); err != nil {
+					return nil, fmt.Errorf("feishu channel %q: %w", name, err)
+				}
+				if _, err := secret.Resolve(ch.AppSecret); err != nil {
+					return nil, fmt.Errorf("feishu channel %q: %w", name, err)
+				}
+			}
+			res = append(res, name+" (feishu)")
+		default:
+			return nil, fmt.Errorf("channel %q: unknown channel type %q", name, chType)
+		}
+	}
+	return res, nil
+}
+
+func enabled(v *bool) bool {
+	return v == nil || *v
+}
+
 // getTelegramChannel returns the first telegram channel config or an empty one.
 func getTelegramChannel(cfg *onboard.FileConfig) onboard.TelegramChannelConfig {
 	if cfg.Channels == nil {
@@ -247,6 +454,84 @@ func verifyBotToken(token string) (*botInfo, error) {
 		return nil, fmt.Errorf("telegram rejected token: %s", desc)
 	}
 	return &result.Result, nil
+}
+
+func verifyFeishuCredentials(baseURL, appID, appSecret string) (string, error) {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		base = "https://open.feishu.cn"
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	tokenBody, err := json.Marshal(map[string]string{
+		"app_id":     appID,
+		"app_secret": appSecret,
+	})
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Post(base+"/open-apis/auth/v3/tenant_access_token/internal", "application/json", bytes.NewReader(tokenBody))
+	if err != nil {
+		return "", fmt.Errorf("feishu tenant token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read feishu tenant token response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("feishu tenant token returned %d", resp.StatusCode)
+	}
+	var tokenResult struct {
+		Code              int    `json:"code"`
+		Msg               string `json:"msg"`
+		TenantAccessToken string `json:"tenant_access_token"`
+	}
+	if err := json.Unmarshal(body, &tokenResult); err != nil {
+		return "", fmt.Errorf("parse feishu tenant token response: %w", err)
+	}
+	if tokenResult.Code != 0 {
+		return "", fmt.Errorf("feishu rejected credentials: code=%d msg=%s", tokenResult.Code, tokenResult.Msg)
+	}
+	if tokenResult.TenantAccessToken == "" {
+		return "", fmt.Errorf("feishu tenant token response missing token")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, base+"/open-apis/bot/v3/info", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+tokenResult.TenantAccessToken)
+	resp, err = client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("feishu bot info request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read feishu bot info response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("feishu bot info returned %d", resp.StatusCode)
+	}
+	var botResult struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Bot  struct {
+			AppName string `json:"app_name"`
+			OpenID  string `json:"open_id"`
+		} `json:"bot"`
+	}
+	if err := json.Unmarshal(body, &botResult); err != nil {
+		return "", fmt.Errorf("parse feishu bot info response: %w", err)
+	}
+	if botResult.Code != 0 {
+		return "", fmt.Errorf("feishu bot info failed: code=%d msg=%s", botResult.Code, botResult.Msg)
+	}
+	if botResult.Bot.OpenID == "" {
+		return "", fmt.Errorf("feishu bot info response missing open_id")
+	}
+	return botResult.Bot.AppName, nil
 }
 
 func checkCodexCLI(fix bool) Check {
