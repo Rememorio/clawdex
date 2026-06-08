@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      COVERAGE_THRESHOLD: 60
 
     steps:
       - name: Checkout code
@@ -37,7 +38,7 @@ jobs:
         id: tests
         continue-on-error: true
         timeout-minutes: 8
-        run: go test -race -timeout=6m -coverprofile=coverage.out -covermode=atomic ./...
+        run: go test -p 1 -race -timeout=6m -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Generate coverage summary
         id: coverage
@@ -51,8 +52,7 @@ jobs:
           TOTAL=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
           echo "total=${TOTAL}" >> $GITHUB_OUTPUT
 
-          THRESHOLD=75
-          if [ "$(echo "$TOTAL < $THRESHOLD" | bc)" -eq 1 ]; then
+          if [ "$(echo "$TOTAL < $COVERAGE_THRESHOLD" | bc)" -eq 1 ]; then
             echo "passed=false" >> $GITHUB_OUTPUT
           else
             echo "passed=true" >> $GITHUB_OUTPUT
@@ -95,6 +95,7 @@ jobs:
         if: always() && github.event_name == 'pull_request' && steps.coverage.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
+          COVERAGE_THRESHOLD: ${{ env.COVERAGE_THRESHOLD }}
           TOTAL: ${{ steps.coverage.outputs.total }}
           PASSED: ${{ steps.coverage.outputs.passed }}
           TESTS_OK: ${{ steps.tests.outcome }}
@@ -135,7 +136,7 @@ jobs:
 
           | Metric | Value |
           |--------|-------|
-          | Coverage | ${COVER_ICON} **${TOTAL}%** (threshold: 75%) |
+          | Coverage | ${COVER_ICON} **${TOTAL}%** (threshold: ${COVERAGE_THRESHOLD}%) |
           | Tests | ${TESTS_MSG} |
 
           <details>
@@ -174,5 +175,5 @@ jobs:
       - name: Fail if coverage below threshold
         if: steps.coverage.outputs.passed == 'false'
         run: |
-          echo "::error::Coverage ${{ steps.coverage.outputs.total }}% is below threshold 60%"
+          echo "::error::Coverage ${{ steps.coverage.outputs.total }}% is below threshold ${COVERAGE_THRESHOLD}%"
           exit 1

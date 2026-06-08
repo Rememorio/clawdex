@@ -731,18 +731,8 @@ func TestCheckGatewayHealth_NotReachable(t *testing.T) {
 	assert.Contains(t, c.Message, "not reachable")
 }
 
-func TestCheckGatewayHealth_DefaultAddress(t *testing.T) {
-	ResetState()
-	defer ResetState()
-
-	// Empty address should default to :8080
-	loadedConfig = &onboard.FileConfig{
-		Gateway: onboard.GatewayFileConfig{Address: ""},
-	}
-
-	c := checkGatewayHealth(false)
-	// Should try localhost:8080 which likely isn't running in test
-	assert.Equal(t, Warn, c.Status)
+func TestGatewayHealthURL_DefaultAddress(t *testing.T) {
+	assert.Equal(t, "http://localhost:8080/healthz", gatewayHealthURL(""))
 }
 
 func TestCheckGatewayHealth_FullAddress(t *testing.T) {

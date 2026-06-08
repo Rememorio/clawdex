@@ -562,16 +562,16 @@ func TestRunStream_TimeoutPreservesStartedSession(t *testing.T) {
 	script := filepath.Join(binDir, "codex")
 	scriptContent := `#!/bin/sh
 echo '{"type":"thread.started","thread_id":"stream-timeout"}'
-sleep 2
+sleep 5
 `
 	require.NoError(t, os.WriteFile(script, []byte(scriptContent), 0o755))
-	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
 
 	store := NewSessionStore(filepath.Join(t.TempDir(), "sessions.json"))
 	c := &Client{
-		WorkDir: t.TempDir(),
-		Timeout: 500 * time.Millisecond,
-		Store:   store,
+		WorkDir:    t.TempDir(),
+		Timeout:    1500 * time.Millisecond,
+		Store:      store,
+		Executable: script,
 	}
 
 	result := c.RunStream(context.Background(), 1, "test", nil, nil, "", "")

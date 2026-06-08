@@ -741,14 +741,7 @@ func checkGatewayHealth(fix bool) Check {
 	if err != nil {
 		return Check{Name: "Health check", Status: Warn, Message: "cannot load config"}
 	}
-	addr := cfg.Gateway.Address
-	if addr == "" {
-		addr = ":8080"
-	}
-	if strings.HasPrefix(addr, ":") {
-		addr = "localhost" + addr
-	}
-	url := "http://" + addr + "/healthz"
+	url := gatewayHealthURL(cfg.Gateway.Address)
 
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(url)
@@ -760,6 +753,16 @@ func checkGatewayHealth(fix bool) Check {
 		return Check{Name: "Health check", Status: Warn, Message: fmt.Sprintf("/healthz returned %d", resp.StatusCode)}
 	}
 	return Check{Name: "Health check", Status: Pass, Message: "/healthz OK"}
+}
+
+func gatewayHealthURL(addr string) string {
+	if addr == "" {
+		addr = ":8080"
+	}
+	if strings.HasPrefix(addr, ":") {
+		addr = "localhost" + addr
+	}
+	return "http://" + addr + "/healthz"
 }
 
 func checkDMPolicyOpen(fix bool) Check {
