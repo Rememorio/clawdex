@@ -254,10 +254,7 @@ func (s *Service) processJob(ctx context.Context, j job) {
 		return
 	}
 
-	// Set "received" reaction.
-	if sr, ok := j.responder.(channel.StatusReactor); ok {
-		_ = sr.SetReaction(ctx, j.msg.ChatID, j.msg.MessageID, "👀")
-	}
+	s.setReceivedReaction(ctx, j)
 
 	// Send typing indicator.
 	if err := j.responder.Typing(ctx, j.msg); err != nil {
@@ -279,6 +276,10 @@ func (s *Service) processJob(ctx context.Context, j job) {
 				"chat", j.msg.ChatID,
 			)
 			s.runStreaming(jobCtx, j, sr)
+			if jobCtx.Err() == context.Canceled {
+				s.setCancelledReaction(ctx, j)
+				return
+			}
 			s.setDoneReaction(ctx, j)
 			return
 		}
@@ -306,14 +307,40 @@ func (s *Service) processJob(ctx context.Context, j job) {
 		"chat", j.msg.ChatID,
 		"output", out,
 	)
+	if jobCtx.Err() == context.Canceled {
+		s.setCancelledReaction(ctx, j)
+		return
+	}
 	s.replyWithMediaDetection(ctx, j, out)
 	s.setDoneReaction(ctx, j)
 }
 
+// setReceivedReaction sets a "received/working" reaction on the original message.
+func (s *Service) setReceivedReaction(ctx context.Context, j job) {
+	s.setStatusReaction(ctx, j, "👀")
+}
+
 // setDoneReaction sets a "done" reaction on the original message.
 func (s *Service) setDoneReaction(ctx context.Context, j job) {
+	s.setStatusReaction(ctx, j, "👍")
+}
+
+// setCancelledReaction sets a "cancelled" reaction on the original message.
+func (s *Service) setCancelledReaction(ctx context.Context, j job) {
+	s.setStatusReaction(ctx, j, "❌")
+}
+
+func (s *Service) setStatusReaction(ctx context.Context, j job, emoji string) {
 	if sr, ok := j.responder.(channel.StatusReactor); ok {
-		_ = sr.SetReaction(ctx, j.msg.ChatID, j.msg.MessageID, "👍")
+		if err := sr.SetReaction(ctx, j.msg.ChatID, j.msg.MessageID, emoji); err != nil {
+			logger.Warn("status reaction failed",
+				"channel", j.msg.Channel,
+				"chat", j.msg.ChatID,
+				"msg", j.msg.MessageID,
+				"emoji", emoji,
+				"error", err,
+			)
+		}
 	}
 }
 

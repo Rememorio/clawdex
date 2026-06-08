@@ -25,6 +25,19 @@ const (
 
 var spaceRe = regexp.MustCompile(`\s+`)
 
+var feishuStatusEmojiTypes = map[string]string{
+	"👀":  "Typing",
+	"⏳":  "Typing",
+	"👍":  "THUMBSUP",
+	"✅":  "THUMBSUP",
+	"❌":  "ERROR",
+	"❤️": "HEART",
+	"❤":  "HEART",
+	"😀":  "SMILE",
+	"🙂":  "SMILE",
+	"😊":  "SMILE",
+}
+
 // GroupRule defines per-group access settings.
 type GroupRule struct {
 	Enabled        *bool
@@ -186,6 +199,8 @@ type responder struct {
 	messageID     string
 	chatID        string
 	replyInThread bool
+	mu            sync.Mutex
+	reactionID    string
 }
 
 func (r *responder) Typing(ctx context.Context, msg channel.Message) error {
@@ -194,6 +209,87 @@ func (r *responder) Typing(ctx context.Context, msg channel.Message) error {
 
 func (r *responder) Reply(ctx context.Context, msg channel.Message, text string) error {
 	return r.driver.reply(ctx, r.messageID, r.chatID, r.replyInThread, text)
+}
+
+func (r *responder) SetReaction(ctx context.Context, chatID, messageID int64, emoji string) error {
+	emojiType := feishuReactionType(emoji)
+	if emojiType == "" {
+		logger.Debug("feishu skip unsupported status reaction",
+			"channel", r.driver.name,
+			"chat", chatID,
+			"msg", messageID,
+			"emoji", emoji,
+		)
+		return nil
+	}
+
+	r.mu.Lock()
+	oldReactionID := r.reactionID
+	r.reactionID = ""
+	r.mu.Unlock()
+
+	if oldReactionID != "" {
+		if err := r.driver.api.DeleteReaction(ctx, r.messageID, oldReactionID); err != nil {
+			logger.Warn("feishu delete status reaction failed",
+				"channel", r.driver.name,
+				"chat", chatID,
+				"msg", messageID,
+				"reaction_id", oldReactionID,
+				"error", err,
+			)
+			return err
+		}
+	}
+
+	reactionID, err := r.driver.api.CreateReaction(ctx, r.messageID, emojiType)
+	if err != nil {
+		logger.Warn("feishu set status reaction failed",
+			"channel", r.driver.name,
+			"chat", chatID,
+			"msg", messageID,
+			"emoji_type", emojiType,
+			"error", err,
+		)
+		return err
+	}
+
+	r.mu.Lock()
+	r.reactionID = reactionID
+	r.mu.Unlock()
+	return nil
+}
+
+func feishuReactionType(emoji string) string {
+	emoji = strings.TrimSpace(emoji)
+	if emoji == "" {
+		return ""
+	}
+	if t, ok := feishuStatusEmojiTypes[emoji]; ok {
+		return t
+	}
+	if isFeishuEmojiType(emoji) {
+		return emoji
+	}
+	return ""
+}
+
+func isFeishuEmojiType(value string) bool {
+	if value == "Typing" {
+		return true
+	}
+	for _, r := range value {
+		if r >= 'A' && r <= 'Z' {
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '_' {
+			continue
+		}
+		return false
+	}
+	return value != ""
 }
 
 func (d *Driver) handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) error {

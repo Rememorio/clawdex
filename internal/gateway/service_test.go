@@ -1641,6 +1641,55 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"should not
 	}
 }
 
+func TestCancel_CancelsRunningJob_StatusReaction(t *testing.T) {
+	binDir := t.TempDir()
+	script := filepath.Join(binDir, "codex")
+	scriptContent := `#!/bin/sh
+trap 'echo "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"interrupted\"}}"; exit 0' INT
+echo '{"type":"thread.started","thread_id":"sess-cancel-status"}'
+sleep 30
+`
+	require.NoError(t, os.WriteFile(script, []byte(scriptContent), 0o755))
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	resp := &mockStatusReactor{}
+
+	driver := &mockDriver{
+		name: "test",
+		startFn: func(ctx context.Context, h channel.Handler) error {
+			h.Handle(ctx, channel.Message{
+				Channel: "test", ChatID: 1, MessageID: 1, Text: "do work",
+			}, resp)
+			time.Sleep(500 * time.Millisecond)
+			h.Handle(ctx, channel.Message{
+				Channel: "test", ChatID: 1, MessageID: 2, Text: "/cancel",
+			}, resp)
+			time.Sleep(1500 * time.Millisecond)
+			return nil
+		},
+	}
+
+	svc := New(&codex.Client{
+		WorkDir: t.TempDir(),
+		Timeout: 30 * time.Second,
+		Store:   codex.NewSessionStore(filepath.Join(t.TempDir(), "sessions.json")),
+	}, 2, "off")
+
+	err := svc.Run(context.Background(), driver)
+	assert.NoError(t, err)
+
+	resp.mu.Lock()
+	reactions := append([]reactionRecord(nil), resp.reactions...)
+	resp.mu.Unlock()
+
+	require.GreaterOrEqual(t, len(reactions), 2)
+	assert.Equal(t, "👀", reactions[0].Emoji)
+	assert.Equal(t, "❌", reactions[len(reactions)-1].Emoji)
+	for _, r := range reactions {
+		assert.NotEqual(t, "👍", r.Emoji)
+	}
+}
+
 func TestCancel_StopAlias(t *testing.T) {
 	resp := &mockResponder{}
 

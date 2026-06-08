@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -15,10 +16,15 @@ import (
 )
 
 type fakeMessageAPI struct {
-	replies   []replyCall
-	sends     []sendCall
-	botOpenID string
-	botErr    error
+	replies       []replyCall
+	sends         []sendCall
+	reactions     []reactionCall
+	deletions     []deleteReactionCall
+	botOpenID     string
+	botErr        error
+	reactionErr   error
+	deleteErr     error
+	nextReactionN int
 }
 
 type replyCall struct {
@@ -30,6 +36,16 @@ type replyCall struct {
 type sendCall struct {
 	chatID string
 	text   string
+}
+
+type reactionCall struct {
+	messageID string
+	emojiType string
+}
+
+type deleteReactionCall struct {
+	messageID  string
+	reactionID string
 }
 
 func (f *fakeMessageAPI) ReplyText(_ context.Context, messageID, text string, replyInThread bool) error {
@@ -44,6 +60,20 @@ func (f *fakeMessageAPI) ReplyText(_ context.Context, messageID, text string, re
 func (f *fakeMessageAPI) SendText(_ context.Context, chatID, text string) error {
 	f.sends = append(f.sends, sendCall{chatID: chatID, text: text})
 	return nil
+}
+
+func (f *fakeMessageAPI) CreateReaction(_ context.Context, messageID, emojiType string) (string, error) {
+	f.reactions = append(f.reactions, reactionCall{messageID: messageID, emojiType: emojiType})
+	if f.reactionErr != nil {
+		return "", f.reactionErr
+	}
+	f.nextReactionN++
+	return "reaction-" + strconv.Itoa(f.nextReactionN), nil
+}
+
+func (f *fakeMessageAPI) DeleteReaction(_ context.Context, messageID, reactionID string) error {
+	f.deletions = append(f.deletions, deleteReactionCall{messageID: messageID, reactionID: reactionID})
+	return f.deleteErr
 }
 
 func (f *fakeMessageAPI) BotOpenID(_ context.Context) (string, error) {
@@ -162,6 +192,58 @@ func TestResponderReplyChunks(t *testing.T) {
 		assert.Equal(t, "om_msg", call.messageID)
 		assert.True(t, call.replyInThread)
 	}
+}
+
+func TestResponderSetReaction_ReplacesPreviousReaction(t *testing.T) {
+	api := &fakeMessageAPI{}
+	d := New(Config{Name: "fs"}, nil)
+	d.api = api
+
+	r := &responder{driver: d, messageID: "om_msg", chatID: "oc_chat"}
+	err := r.SetReaction(context.Background(), 1, 10, "👀")
+	require.NoError(t, err)
+	err = r.SetReaction(context.Background(), 1, 10, "👍")
+	require.NoError(t, err)
+	err = r.SetReaction(context.Background(), 1, 10, "❌")
+	require.NoError(t, err)
+
+	require.Equal(t, []reactionCall{
+		{messageID: "om_msg", emojiType: "Typing"},
+		{messageID: "om_msg", emojiType: "THUMBSUP"},
+		{messageID: "om_msg", emojiType: "ERROR"},
+	}, api.reactions)
+	require.Equal(t, []deleteReactionCall{
+		{messageID: "om_msg", reactionID: "reaction-1"},
+		{messageID: "om_msg", reactionID: "reaction-2"},
+	}, api.deletions)
+}
+
+func TestResponderSetReaction_UnsupportedEmojiNoops(t *testing.T) {
+	api := &fakeMessageAPI{}
+	d := New(Config{Name: "fs"}, nil)
+	d.api = api
+
+	r := &responder{driver: d, messageID: "om_msg", chatID: "oc_chat"}
+	err := r.SetReaction(context.Background(), 1, 10, "🫠")
+	require.NoError(t, err)
+
+	assert.Empty(t, api.reactions)
+	assert.Empty(t, api.deletions)
+}
+
+func TestHandleMessageEvent_ResponderSupportsStatusReactor(t *testing.T) {
+	api := &fakeMessageAPI{}
+	d := New(Config{Name: "fs", DMPolicy: "open"}, nil)
+	d.api = api
+	h := &captureHandler{}
+	d.handler = h
+
+	err := d.handleMessageEvent(context.Background(), newTextEvent("p2p", "hello", nil))
+	require.NoError(t, err)
+
+	require.Len(t, h.responders, 1)
+	_, ok := h.responders[0].(channel.StatusReactor)
+	assert.True(t, ok)
 }
 
 func TestExtractPostText(t *testing.T) {

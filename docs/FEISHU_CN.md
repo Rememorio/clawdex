@@ -14,6 +14,8 @@ clawdex 飞书渠道的详细参考文档。
 - **私聊 + 群聊** — 支持单聊和群聊。
 - **群聊安全默认值** — 默认要求 @机器人。
 - **文本回复** — 当前先支持文本消息；媒体可后续扩展。
+- **状态表情** — Codex 处理期间添加 `Typing` 表情，完成后替换为 `THUMBSUP`，
+  取消时替换为 `ERROR`。
 
 ## 设置
 
@@ -26,6 +28,7 @@ clawdex 飞书渠道的详细参考文档。
    - 读取用户发给机器人的单聊消息。
    - 获取群组中用户 @机器人的消息。
    - 获取群组中所有消息。如开通该敏感权限，建议保持 `require_mention: true`。
+   - 如需状态表情，开通添加和删除消息表情回复权限。
 7. 发布应用修改。
 
 运行 `clawdex onboard`，选择 **Add Feishu instance**。
@@ -143,6 +146,13 @@ export FEISHU_GROUP_POLICY="allowlist"
 export FEISHU_GROUP_ALLOW_FROM="oc_xxx"
 ```
 
+## 状态表情
+
+普通 Codex 任务开始时，clawdex 会先在原消息上添加飞书 `Typing` reaction。
+任务完成后，driver 会删除旧 reaction 并添加 `THUMBSUP`；任务取消时会添加
+`ERROR`。如果应用缺少 reaction 权限，或目标消息无法添加 reaction，clawdex
+会记录 warning，并继续发送文本回复。
+
 ## 故障排查
 
 - 如果网关日志出现长连接鉴权错误，检查 `app_id` 和 `app_secret`。
@@ -150,3 +160,4 @@ export FEISHU_GROUP_ALLOW_FROM="oc_xxx"
 - 如果收不到私聊消息，检查应用对发送者是否可用，以及单聊消息权限是否开通。
 - 如果收不到群消息，确认机器人已入群，并开通 @机器人或群组全量消息权限。
 - 如果群消息到达但 clawdex 不响应，检查 `group_policy`、`group_allow_from` 和 `require_mention`。
+- 如果状态表情不出现，检查应用是否已开通消息表情回复权限并重新发布。

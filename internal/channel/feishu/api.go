@@ -140,6 +140,59 @@ func (a *larkMessageAPI) SendText(ctx context.Context, chatID, text string) erro
 	return nil
 }
 
+func (a *larkMessageAPI) CreateReaction(ctx context.Context, messageID, emojiType string) (string, error) {
+	messageID = strings.TrimSpace(messageID)
+	emojiType = strings.TrimSpace(emojiType)
+	if messageID == "" {
+		return "", fmt.Errorf("feishu create reaction: missing message_id")
+	}
+	if emojiType == "" {
+		return "", fmt.Errorf("feishu create reaction: missing emoji_type")
+	}
+
+	resp, err := a.client.Im.MessageReaction.Create(ctx, larkim.NewCreateMessageReactionReqBuilder().
+		MessageId(messageID).
+		Body(larkim.NewCreateMessageReactionReqBodyBuilder().
+			ReactionType(larkim.NewEmojiBuilder().
+				EmojiType(emojiType).
+				Build()).
+			Build()).
+		Build())
+	if err != nil {
+		return "", fmt.Errorf("feishu create reaction: %w", err)
+	}
+	if !resp.Success() {
+		return "", fmt.Errorf("feishu create reaction: code=%d msg=%s log_id=%s", resp.Code, resp.Msg, resp.RequestId())
+	}
+	if resp.Data == nil || resp.Data.ReactionId == nil || strings.TrimSpace(*resp.Data.ReactionId) == "" {
+		return "", fmt.Errorf("feishu create reaction: missing reaction_id")
+	}
+	return strings.TrimSpace(*resp.Data.ReactionId), nil
+}
+
+func (a *larkMessageAPI) DeleteReaction(ctx context.Context, messageID, reactionID string) error {
+	messageID = strings.TrimSpace(messageID)
+	reactionID = strings.TrimSpace(reactionID)
+	if messageID == "" {
+		return fmt.Errorf("feishu delete reaction: missing message_id")
+	}
+	if reactionID == "" {
+		return nil
+	}
+
+	resp, err := a.client.Im.MessageReaction.Delete(ctx, larkim.NewDeleteMessageReactionReqBuilder().
+		MessageId(messageID).
+		ReactionId(reactionID).
+		Build())
+	if err != nil {
+		return fmt.Errorf("feishu delete reaction: %w", err)
+	}
+	if !resp.Success() {
+		return fmt.Errorf("feishu delete reaction: code=%d msg=%s log_id=%s", resp.Code, resp.Msg, resp.RequestId())
+	}
+	return nil
+}
+
 func marshalTextContent(text string) (string, error) {
 	data, err := json.Marshal(textContent{Text: text})
 	if err != nil {
