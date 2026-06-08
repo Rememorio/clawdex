@@ -236,6 +236,9 @@ You are a helpful coding assistant.
 EOF
 ```
 
+SOUL files are reloaded when a fresh Codex session starts. After editing a SOUL
+file, use `/new` in chat for the next message to pick up the change.
+
 For multi-instance WeCom setups, use `~/.clawdex/SOUL-<name>.md` for per-instance prompts.
 
 ## Diagnostics

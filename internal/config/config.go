@@ -54,6 +54,8 @@ type TelegramConfig struct {
 	Streaming           string
 	AllowFrom           []int64
 	SoulContent         string                      // per-instance SOUL content (from SOUL-<name>.md)
+	SoulPath            string                      // path to SOUL-<name>.md for dynamic reloads
+	SoulOverride        bool                        // true when SOUL-<name>.md was loaded at startup
 	GroupPolicy         string                      // "allowlist" (default), "open", "disabled"
 	GroupAllowFrom      []int64                     // group-level chatID allowlist
 	Groups              map[int64]TelegramGroupRule // chatID → rule; -1 = wildcard fallback
@@ -74,6 +76,7 @@ type CodexConfig struct {
 	Sandbox        string
 	GroupSandbox   string
 	SoulContent    string // contents of SOUL.md, injected via -c instructions
+	SoulPath       string // path to SOUL.md for dynamic reloads
 }
 
 // WeComGroupRule defines per-group access settings.
@@ -105,7 +108,9 @@ type FeishuConfig struct {
 	RequireMention *bool
 
 	// Per-instance SOUL content (from SOUL-<name>.md, falls back to global).
-	SoulContent string
+	SoulContent  string
+	SoulPath     string
+	SoulOverride bool
 }
 
 // WeComConfig controls WeCom channel integration.
@@ -130,7 +135,10 @@ type WeComConfig struct {
 	HeartbeatInterval time.Duration // optional, default 30s
 
 	// Per-instance SOUL content (from SOUL-<name>.md, falls back to global).
-	SoulContent string
+	SoulContent  string
+	SoulPath     string
+	SoulOverride bool
+	SoulAppend   string
 }
 
 // WeixinConfig controls Weixin (personal WeChat) channel integration.
@@ -144,7 +152,9 @@ type WeixinConfig struct {
 	AllowFrom      []string // user ID strings (xxx@im.wechat)
 
 	// Per-instance SOUL content (from SOUL-<name>.md, falls back to global).
-	SoulContent string
+	SoulContent  string
+	SoulPath     string
+	SoulOverride bool
 }
 
 // QQBotConfig controls QQ Bot channel integration.
@@ -160,7 +170,9 @@ type QQBotConfig struct {
 	TextChunkLimit int      // max chars per chunk (default 5000)
 
 	// Per-instance SOUL content (from SOUL-<name>.md, falls back to global).
-	SoulContent string
+	SoulContent  string
+	SoulPath     string
+	SoulOverride bool
 }
 
 // Load builds configuration by merging the config file (~/.clawdex/clawdex.json)
@@ -233,7 +245,9 @@ func Load() (*Config, error) {
 
 	// Load SOUL.md from ~/.clawdex/SOUL.md (best-effort, not an error if missing).
 	var soulContent string
-	if soulPath, err := onboard.SoulPath(); err == nil {
+	var soulPath string
+	if path, err := onboard.SoulPath(); err == nil {
+		soulPath = path
 		if data, err := os.ReadFile(soulPath); err == nil {
 			soulContent = strings.TrimSpace(string(data))
 		}
@@ -252,6 +266,7 @@ func Load() (*Config, error) {
 			Sandbox:        sandbox,
 			GroupSandbox:   groupSandbox,
 			SoulContent:    soulContent,
+			SoulPath:       soulPath,
 		},
 	}
 
@@ -603,8 +618,10 @@ func loadTelegramFromChannel(name string, ch onboard.TelegramChannelConfig, glob
 
 	cfg.SoulContent = globalSoul
 	if instancePath, err := onboard.InstanceSoulPath(name); err == nil && instancePath != "" {
+		cfg.SoulPath = instancePath
 		if data, err := os.ReadFile(instancePath); err == nil {
 			cfg.SoulContent = strings.TrimSpace(string(data))
+			cfg.SoulOverride = true
 		}
 	}
 
@@ -746,14 +763,17 @@ func loadWeComFromChannel(name string, ch onboard.WeComChannelConfig, globalSoul
 
 	wc.SoulContent = globalSoul
 	if instancePath, err := onboard.InstanceSoulPath(name); err == nil && instancePath != "" {
+		wc.SoulPath = instancePath
 		if data, err := os.ReadFile(instancePath); err == nil {
 			wc.SoulContent = strings.TrimSpace(string(data))
+			wc.SoulOverride = true
 		}
 	}
 
 	// In WebSocket mode, append media-handling hints so
 	// Codex knows about WeCom voice/video format constraints.
 	if wc.ConnectionMode == "websocket" {
+		wc.SoulAppend = strings.TrimSpace(wecomMediaHint)
 		wc.SoulContent = appendWeComMediaHint(wc.SoulContent)
 	}
 
@@ -831,8 +851,10 @@ func loadWeixinFromChannel(name string, ch onboard.WeixinChannelConfig, globalSo
 
 	wx.SoulContent = globalSoul
 	if instancePath, err := onboard.InstanceSoulPath(name); err == nil && instancePath != "" {
+		wx.SoulPath = instancePath
 		if data, err := os.ReadFile(instancePath); err == nil {
 			wx.SoulContent = strings.TrimSpace(string(data))
+			wx.SoulOverride = true
 		}
 	}
 
@@ -886,8 +908,10 @@ func loadQQBotFromChannel(name string, ch onboard.QQBotChannelConfig, globalSoul
 
 	qq.SoulContent = globalSoul
 	if instancePath, err := onboard.InstanceSoulPath(name); err == nil && instancePath != "" {
+		qq.SoulPath = instancePath
 		if data, err := os.ReadFile(instancePath); err == nil {
 			qq.SoulContent = strings.TrimSpace(string(data))
+			qq.SoulOverride = true
 		}
 	}
 
@@ -1022,8 +1046,10 @@ func loadFeishuFromChannel(name string, ch onboard.FeishuChannelConfig, globalSo
 
 	fs.SoulContent = globalSoul
 	if instancePath, err := onboard.InstanceSoulPath(name); err == nil && instancePath != "" {
+		fs.SoulPath = instancePath
 		if data, err := os.ReadFile(instancePath); err == nil {
 			fs.SoulContent = strings.TrimSpace(string(data))
+			fs.SoulOverride = true
 		}
 	}
 

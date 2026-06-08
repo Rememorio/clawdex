@@ -790,6 +790,24 @@ func TestStatusSoulState_Global(t *testing.T) {
 	assert.Equal(t, "loaded (global)", statusSoulState(c, ""))
 }
 
+func TestStatusSoulState_GlobalPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SOUL.md")
+	require.NoError(t, os.WriteFile(path, []byte("global content"), 0o644))
+
+	c := &codex.Client{SoulPath: path}
+	assert.Equal(t, "loaded (global)", statusSoulState(c, "feishu"))
+}
+
+func TestStatusSoulState_ChannelPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SOUL-feishu.md")
+	require.NoError(t, os.WriteFile(path, []byte("channel content"), 0o644))
+
+	c := &codex.Client{
+		SoulOverridePaths: map[string]string{"feishu": path},
+	}
+	assert.Equal(t, "loaded (channel override)", statusSoulState(c, "feishu"))
+}
+
 func TestStatusSoulState_NotConfigured(t *testing.T) {
 	c := &codex.Client{}
 	assert.Equal(t, "not configured", statusSoulState(c, ""))

@@ -1721,7 +1721,9 @@ func TestLoad_TelegramSoulContent(t *testing.T) {
 	loadedCfg, err := Load()
 	require.NoError(t, err)
 	assert.Equal(t, "Be helpful.", firstTelegram(t, loadedCfg).SoulContent)
+	assert.Equal(t, soulPath, loadedCfg.Codex.SoulPath)
 	assert.Equal(t, "Be helpful.", loadedCfg.Codex.SoulContent)
+	assert.False(t, firstTelegram(t, loadedCfg).SoulOverride)
 }
 
 func TestLoad_TelegramInstanceSoul(t *testing.T) {
@@ -1730,7 +1732,8 @@ func TestLoad_TelegramInstanceSoul(t *testing.T) {
 	require.NoError(t, os.MkdirAll(clawdexDir, 0o755))
 
 	// Write instance-specific SOUL
-	require.NoError(t, os.WriteFile(filepath.Join(clawdexDir, "SOUL-my-tg.md"), []byte("Instance soul."), 0o644))
+	instanceSoulPath := filepath.Join(clawdexDir, "SOUL-my-tg.md")
+	require.NoError(t, os.WriteFile(instanceSoulPath, []byte("Instance soul."), 0o644))
 
 	t.Setenv("HOME", dir)
 
@@ -1747,6 +1750,8 @@ func TestLoad_TelegramInstanceSoul(t *testing.T) {
 	loadedCfg, err := Load()
 	require.NoError(t, err)
 	assert.Equal(t, "Instance soul.", firstTelegram(t, loadedCfg).SoulContent)
+	assert.Equal(t, instanceSoulPath, firstTelegram(t, loadedCfg).SoulPath)
+	assert.True(t, firstTelegram(t, loadedCfg).SoulOverride)
 }
 
 // ── Additional coverage tests for WeCom, Weixin, QQBot validation ──

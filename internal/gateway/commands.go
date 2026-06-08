@@ -427,15 +427,7 @@ func statusScope(msg channel.Message) string {
 }
 
 func statusSoulState(c *codex.Client, channelName string) string {
-	if channelName != "" && c.SoulOverrides != nil {
-		if content, ok := c.SoulOverrides[channelName]; ok && content != "" {
-			return "loaded (channel override)"
-		}
-	}
-	if c.SoulContent != "" {
-		return "loaded (global)"
-	}
-	return "not configured"
+	return c.SoulState(channelName)
 }
 
 func cmdStatus(c *codex.Client, msg channel.Message, _ string) commandResponse {

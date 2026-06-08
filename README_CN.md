@@ -223,6 +223,9 @@ cat > ~/.clawdex/SOUL.md << 'EOF'
 EOF
 ```
 
+SOUL 文件会在新的 Codex 会话开始时重新读取。修改 SOUL 文件后，在聊天中使用
+`/new`，下一条消息就会应用新内容。
+
 多实例企微配置可使用 `~/.clawdex/SOUL-<name>.md` 实现实例级提示词。
 
 ## 诊断

@@ -125,15 +125,18 @@ type jsonItem struct {
 
 // Client executes prompts through `codex exec` and returns final text output.
 type Client struct {
-	WorkDir       string
-	Timeout       time.Duration
-	Sandbox       string
-	GroupSandbox  string
-	SoulContent   string            // SOUL.md content, injected via -c instructions on fresh sessions
-	SoulOverrides map[string]string // channel name → soul content; overrides SoulContent per channel
-	Store         *SessionStore
-	Trace         *TraceLogger
-	Executable    string // override for the codex binary path (default: "codex")
+	WorkDir           string
+	Timeout           time.Duration
+	Sandbox           string
+	GroupSandbox      string
+	SoulContent       string            // SOUL.md content, injected via -c instructions on fresh sessions
+	SoulPath          string            // path to global SOUL.md; reloaded on fresh sessions when present
+	SoulOverrides     map[string]string // channel name → soul content; overrides SoulContent per channel
+	SoulOverridePaths map[string]string // channel name → SOUL-<name>.md path; reloaded on fresh sessions
+	SoulAppends       map[string]string // channel name → suffix appended to resolved SOUL content
+	Store             *SessionStore
+	Trace             *TraceLogger
+	Executable        string // override for the codex binary path (default: "codex")
 }
 
 // executableName returns the codex binary name to use.
@@ -145,14 +148,68 @@ func (c *Client) executableName() string {
 }
 
 // resolveSoul returns the soul content for the given channel.
-// Per-channel overrides take priority; falls back to the global SoulContent.
+// File-backed SOUL content is reloaded on fresh sessions so edits take effect
+// after /new without requiring a gateway restart. Cached startup content remains
+// a fallback for read errors.
 func (c *Client) resolveSoul(channel string) string {
-	if channel != "" && c.SoulOverrides != nil {
-		if content, ok := c.SoulOverrides[channel]; ok {
-			return content
+	if channel != "" && c.SoulOverridePaths != nil {
+		if path, ok := c.SoulOverridePaths[channel]; ok {
+			if content := readSoulFile(path); content != "" {
+				return c.applySoulAppend(channel, content)
+			}
 		}
 	}
-	return c.SoulContent
+	if channel != "" && c.SoulOverrides != nil {
+		if content, ok := c.SoulOverrides[channel]; ok {
+			if content = strings.TrimSpace(content); content != "" {
+				return c.applySoulAppend(channel, content)
+			}
+		}
+	}
+	if content := readSoulFile(c.SoulPath); content != "" {
+		return c.applySoulAppend(channel, content)
+	}
+	return c.applySoulAppend(channel, strings.TrimSpace(c.SoulContent))
+}
+
+func readSoulFile(path string) string {
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func (c *Client) applySoulAppend(channel, content string) string {
+	if content == "" || channel == "" || c.SoulAppends == nil {
+		return content
+	}
+	suffix := strings.TrimSpace(c.SoulAppends[channel])
+	if suffix == "" || strings.Contains(content, suffix) {
+		return content
+	}
+	return content + "\n" + suffix
+}
+
+// SoulState returns a user-facing summary of SOUL configuration for a channel.
+func (c *Client) SoulState(channel string) string {
+	if channel != "" {
+		if c.SoulOverridePaths != nil && readSoulFile(c.SoulOverridePaths[channel]) != "" {
+			return "loaded (channel override)"
+		}
+		if c.SoulOverrides != nil {
+			if content := strings.TrimSpace(c.SoulOverrides[channel]); content != "" {
+				return "loaded (channel override)"
+			}
+		}
+	}
+	if readSoulFile(c.SoulPath) != "" || strings.TrimSpace(c.SoulContent) != "" {
+		return "loaded (global)"
+	}
+	return "not configured"
 }
 
 // ResetSession marks the active session for the given chat as inactive,

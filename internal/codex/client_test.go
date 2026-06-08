@@ -747,6 +747,74 @@ func TestResolveSoul_NilOverrides(t *testing.T) {
 	assert.Equal(t, "global", c.resolveSoul("anything"))
 }
 
+func TestResolveSoul_ReloadsGlobalPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SOUL.md")
+	require.NoError(t, os.WriteFile(path, []byte("first"), 0o644))
+
+	c := &Client{SoulPath: path}
+	assert.Equal(t, "first", c.resolveSoul("feishu"))
+
+	require.NoError(t, os.WriteFile(path, []byte("second"), 0o644))
+	assert.Equal(t, "second", c.resolveSoul("feishu"))
+}
+
+func TestResolveSoul_ChannelPathOverridesGlobal(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "SOUL.md")
+	channelPath := filepath.Join(dir, "SOUL-feishu.md")
+	require.NoError(t, os.WriteFile(globalPath, []byte("global"), 0o644))
+	require.NoError(t, os.WriteFile(channelPath, []byte("channel"), 0o644))
+
+	c := &Client{
+		SoulPath:          globalPath,
+		SoulOverridePaths: map[string]string{"feishu": channelPath},
+	}
+	assert.Equal(t, "channel", c.resolveSoul("feishu"))
+	assert.Equal(t, "global", c.resolveSoul("telegram"))
+}
+
+func TestResolveSoul_ChannelPathFallsBackToGlobal(t *testing.T) {
+	globalPath := filepath.Join(t.TempDir(), "SOUL.md")
+	require.NoError(t, os.WriteFile(globalPath, []byte("global"), 0o644))
+
+	c := &Client{
+		SoulPath:          globalPath,
+		SoulOverridePaths: map[string]string{"feishu": filepath.Join(t.TempDir(), "missing.md")},
+	}
+	assert.Equal(t, "global", c.resolveSoul("feishu"))
+}
+
+func TestResolveSoul_ChannelPathFallsBackToCachedOverride(t *testing.T) {
+	globalPath := filepath.Join(t.TempDir(), "SOUL.md")
+	require.NoError(t, os.WriteFile(globalPath, []byte("global"), 0o644))
+
+	c := &Client{
+		SoulPath:          globalPath,
+		SoulOverrides:     map[string]string{"feishu": "cached channel"},
+		SoulOverridePaths: map[string]string{"feishu": filepath.Join(t.TempDir(), "missing.md")},
+	}
+	assert.Equal(t, "cached channel", c.resolveSoul("feishu"))
+}
+
+func TestResolveSoul_AppendsChannelHint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SOUL.md")
+	require.NoError(t, os.WriteFile(path, []byte("global"), 0o644))
+
+	c := &Client{
+		SoulPath:    path,
+		SoulAppends: map[string]string{"wecom": "hint"},
+	}
+	assert.Equal(t, "global\nhint", c.resolveSoul("wecom"))
+}
+
+func TestResolveSoul_AppendsChannelHintOnce(t *testing.T) {
+	c := &Client{
+		SoulContent: "global\nhint",
+		SoulAppends: map[string]string{"wecom": "hint"},
+	}
+	assert.Equal(t, "global\nhint", c.resolveSoul("wecom"))
+}
+
 func TestTraceCommandName(t *testing.T) {
 	tests := []struct {
 		name string

@@ -79,6 +79,27 @@ func openCodexTraceLogger(rawPath, dataDir string) (
 	return codex.NewTraceLogger(file), file, path, nil
 }
 
+func addSoulSource(c *codex.Client, channelName, content, path string, override bool, appendText string) {
+	if override && content != "" {
+		if c.SoulOverrides == nil {
+			c.SoulOverrides = make(map[string]string)
+		}
+		c.SoulOverrides[channelName] = content
+	}
+	if path != "" {
+		if c.SoulOverridePaths == nil {
+			c.SoulOverridePaths = make(map[string]string)
+		}
+		c.SoulOverridePaths[channelName] = path
+	}
+	if appendText != "" {
+		if c.SoulAppends == nil {
+			c.SoulAppends = make(map[string]string)
+		}
+		c.SoulAppends[channelName] = appendText
+	}
+}
+
 // RunGateway starts the HTTP server and channel gateway in the foreground.
 // It handles signal-based shutdown (SIGINT, SIGTERM), writes a PID file,
 // and cleans it up on exit.
@@ -126,57 +147,43 @@ func RunGateway() error {
 		Sandbox:      cfg.Codex.Sandbox,
 		GroupSandbox: cfg.Codex.GroupSandbox,
 		SoulContent:  cfg.Codex.SoulContent,
+		SoulPath:     cfg.Codex.SoulPath,
 		Store:        codex.NewSessionStore(filepath.Join(dataDir, "sessions.json")),
 		Trace:        codexTraceLogger,
 	}
 
 	// Populate per-instance SOUL overrides from Telegram configs.
 	for _, tgCfg := range cfg.Telegram {
-		if tgCfg.Enabled && tgCfg.SoulContent != "" {
-			if codexClient.SoulOverrides == nil {
-				codexClient.SoulOverrides = make(map[string]string)
-			}
-			codexClient.SoulOverrides[tgCfg.Name] = tgCfg.SoulContent
+		if tgCfg.Enabled {
+			addSoulSource(codexClient, tgCfg.Name, tgCfg.SoulContent, tgCfg.SoulPath, tgCfg.SoulOverride, "")
 		}
 	}
 
 	// Populate per-instance SOUL overrides from WeCom configs.
 	for _, wcCfg := range cfg.WeCom {
-		if wcCfg.Enabled && wcCfg.SoulContent != "" {
-			if codexClient.SoulOverrides == nil {
-				codexClient.SoulOverrides = make(map[string]string)
-			}
-			codexClient.SoulOverrides[wcCfg.Name] = wcCfg.SoulContent
+		if wcCfg.Enabled {
+			addSoulSource(codexClient, wcCfg.Name, wcCfg.SoulContent, wcCfg.SoulPath, wcCfg.SoulOverride, wcCfg.SoulAppend)
 		}
 	}
 
 	// Populate per-instance SOUL overrides from Weixin configs.
 	for _, wxCfg := range cfg.Weixin {
-		if wxCfg.Enabled && wxCfg.SoulContent != "" {
-			if codexClient.SoulOverrides == nil {
-				codexClient.SoulOverrides = make(map[string]string)
-			}
-			codexClient.SoulOverrides[wxCfg.Name] = wxCfg.SoulContent
+		if wxCfg.Enabled {
+			addSoulSource(codexClient, wxCfg.Name, wxCfg.SoulContent, wxCfg.SoulPath, wxCfg.SoulOverride, "")
 		}
 	}
 
 	// Populate per-instance SOUL overrides from QQ Bot configs.
 	for _, qqCfg := range cfg.QQBot {
-		if qqCfg.Enabled && qqCfg.SoulContent != "" {
-			if codexClient.SoulOverrides == nil {
-				codexClient.SoulOverrides = make(map[string]string)
-			}
-			codexClient.SoulOverrides[qqCfg.Name] = qqCfg.SoulContent
+		if qqCfg.Enabled {
+			addSoulSource(codexClient, qqCfg.Name, qqCfg.SoulContent, qqCfg.SoulPath, qqCfg.SoulOverride, "")
 		}
 	}
 
 	// Populate per-instance SOUL overrides from Feishu configs.
 	for _, fsCfg := range cfg.Feishu {
-		if fsCfg.Enabled && fsCfg.SoulContent != "" {
-			if codexClient.SoulOverrides == nil {
-				codexClient.SoulOverrides = make(map[string]string)
-			}
-			codexClient.SoulOverrides[fsCfg.Name] = fsCfg.SoulContent
+		if fsCfg.Enabled {
+			addSoulSource(codexClient, fsCfg.Name, fsCfg.SoulContent, fsCfg.SoulPath, fsCfg.SoulOverride, "")
 		}
 	}
 
