@@ -1641,6 +1641,55 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"should not
 	}
 }
 
+func TestCancel_CancelsRunningJob_StatusReaction(t *testing.T) {
+	binDir := t.TempDir()
+	script := filepath.Join(binDir, "codex")
+	scriptContent := `#!/bin/sh
+trap 'echo "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"interrupted\"}}"; exit 0' INT
+echo '{"type":"thread.started","thread_id":"sess-cancel-status"}'
+sleep 30
+`
+	require.NoError(t, os.WriteFile(script, []byte(scriptContent), 0o755))
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	resp := &mockStatusReactor{}
+
+	driver := &mockDriver{
+		name: "test",
+		startFn: func(ctx context.Context, h channel.Handler) error {
+			h.Handle(ctx, channel.Message{
+				Channel: "test", ChatID: 1, MessageID: 1, Text: "do work",
+			}, resp)
+			time.Sleep(500 * time.Millisecond)
+			h.Handle(ctx, channel.Message{
+				Channel: "test", ChatID: 1, MessageID: 2, Text: "/cancel",
+			}, resp)
+			time.Sleep(1500 * time.Millisecond)
+			return nil
+		},
+	}
+
+	svc := New(&codex.Client{
+		WorkDir: t.TempDir(),
+		Timeout: 30 * time.Second,
+		Store:   codex.NewSessionStore(filepath.Join(t.TempDir(), "sessions.json")),
+	}, 2, "off")
+
+	err := svc.Run(context.Background(), driver)
+	assert.NoError(t, err)
+
+	resp.mu.Lock()
+	reactions := append([]reactionRecord(nil), resp.reactions...)
+	resp.mu.Unlock()
+
+	require.GreaterOrEqual(t, len(reactions), 2)
+	assert.Equal(t, "👀", reactions[0].Emoji)
+	assert.Equal(t, "❌", reactions[len(reactions)-1].Emoji)
+	for _, r := range reactions {
+		assert.NotEqual(t, "👍", r.Emoji)
+	}
+}
+
 func TestCancel_StopAlias(t *testing.T) {
 	resp := &mockResponder{}
 
@@ -1844,23 +1893,27 @@ func TestExtractFilePaths_HomePathNonExistent(t *testing.T) {
 
 // ── cleanupMediaDirs tests ──
 
-func TestCleanupMediaDirs_RemovesMatchingDirs(t *testing.T) {
-	// Create a temp dir that matches the pattern.
-	tmpDir, err := os.MkdirTemp("", "clawdex-tg-media-")
-	require.NoError(t, err)
+func TestCleanupMediaDirs_RemovesChannelMediaTempDirs(t *testing.T) {
+	for _, prefix := range []string{
+		"clawdex-tg-media-",
+		"clawdex-wecom-media-",
+		"clawdex-qqbot-media-",
+		"clawdex-wx-media-",
+		"clawdex-feishu-media-",
+	} {
+		t.Run(prefix, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", prefix)
+			require.NoError(t, err)
 
-	f := filepath.Join(tmpDir, "photo.jpg")
-	require.NoError(t, os.WriteFile(f, []byte("img"), 0o644))
+			f := filepath.Join(tmpDir, "media.dat")
+			require.NoError(t, os.WriteFile(f, []byte("data"), 0o644))
 
-	// Verify it exists.
-	_, err = os.Stat(tmpDir)
-	require.NoError(t, err)
+			cleanupMediaDirs([]string{f})
 
-	cleanupMediaDirs([]string{f})
-
-	// Should be removed.
-	_, err = os.Stat(tmpDir)
-	assert.True(t, os.IsNotExist(err))
+			_, err = os.Stat(tmpDir)
+			assert.True(t, os.IsNotExist(err))
+		})
+	}
 }
 
 func TestCleanupMediaDirs_IgnoresNonMatchingDirs(t *testing.T) {
@@ -1881,17 +1934,17 @@ func TestCleanupMediaDirs_EmptyPaths(t *testing.T) {
 	cleanupMediaDirs([]string{})
 }
 
-func TestCleanupMediaDirs_WeComMediaDir(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "clawdex-wecom-media-")
-	require.NoError(t, err)
+func TestCleanupMediaDirs_IgnoresMatchingNameOutsideTempRoot(t *testing.T) {
+	root := t.TempDir()
+	tmpDir := filepath.Join(root, "clawdex-wecom-media-local")
+	require.NoError(t, os.Mkdir(tmpDir, 0o755))
 
 	f := filepath.Join(tmpDir, "audio.wav")
 	require.NoError(t, os.WriteFile(f, []byte("wav"), 0o644))
-
 	cleanupMediaDirs([]string{f})
 
-	_, err = os.Stat(tmpDir)
-	assert.True(t, os.IsNotExist(err))
+	_, err := os.Stat(tmpDir)
+	assert.NoError(t, err)
 }
 
 func TestCleanupMediaDirs_MultipleSets(t *testing.T) {

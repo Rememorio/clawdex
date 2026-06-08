@@ -290,6 +290,9 @@ func TestLoad_GatewayAddressDefault(t *testing.T) {
 }
 
 func TestLoad_LoggingDefaults(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "")
+	t.Setenv("LOG_FORMAT", "")
+	t.Setenv("LOG_CODEX_FILE", "")
 	writeTestConfig(t, &onboard.FileConfig{
 		Channels: map[string]json.RawMessage{
 			"telegram": tgChannel(func(ch *onboard.TelegramChannelConfig) {

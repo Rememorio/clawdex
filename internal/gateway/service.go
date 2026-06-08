@@ -137,9 +137,9 @@ func (s *Service) Run(ctx context.Context, drivers ...channel.Driver) error {
 	}
 }
 
-// cleanupMediaDirs removes temp directories created by downloadMedia.
-// It collects unique parent dirs matching the clawdex-tg-media- or
-// clawdex-wecom-media- prefix and removes them.
+// cleanupMediaDirs removes temp directories created by channel media downloaders.
+// CleanupPaths is the channel-owned cleanup contract; the gateway only removes
+// clawdex media dirs under the system temp root.
 func cleanupMediaDirs(pathSets ...[]string) {
 	seen := make(map[string]bool)
 	for _, paths := range pathSets {
@@ -149,12 +149,28 @@ func cleanupMediaDirs(pathSets ...[]string) {
 				continue
 			}
 			seen[dir] = true
-			base := filepath.Base(dir)
-			if strings.Contains(base, "clawdex-tg-media-") || strings.Contains(base, "clawdex-wecom-media-") {
+			if isClawdexMediaTempDir(dir) {
 				os.RemoveAll(dir)
 			}
 		}
 	}
+}
+
+func isClawdexMediaTempDir(dir string) bool {
+	base := filepath.Base(dir)
+	if !strings.HasPrefix(base, "clawdex-") || !strings.Contains(base, "-media-") {
+		return false
+	}
+
+	parent := filepath.Clean(filepath.Dir(dir))
+	tmpRoot := filepath.Clean(os.TempDir())
+	if evalParent, err := filepath.EvalSymlinks(parent); err == nil {
+		parent = evalParent
+	}
+	if evalRoot, err := filepath.EvalSymlinks(tmpRoot); err == nil {
+		tmpRoot = evalRoot
+	}
+	return parent == tmpRoot
 }
 
 // resolveSandbox returns the sandbox level to use for a given message.
@@ -254,10 +270,7 @@ func (s *Service) processJob(ctx context.Context, j job) {
 		return
 	}
 
-	// Set "received" reaction.
-	if sr, ok := j.responder.(channel.StatusReactor); ok {
-		_ = sr.SetReaction(ctx, j.msg.ChatID, j.msg.MessageID, "👀")
-	}
+	s.setReceivedReaction(ctx, j)
 
 	// Send typing indicator.
 	if err := j.responder.Typing(ctx, j.msg); err != nil {
@@ -279,6 +292,10 @@ func (s *Service) processJob(ctx context.Context, j job) {
 				"chat", j.msg.ChatID,
 			)
 			s.runStreaming(jobCtx, j, sr)
+			if jobCtx.Err() == context.Canceled {
+				s.setCancelledReaction(ctx, j)
+				return
+			}
 			s.setDoneReaction(ctx, j)
 			return
 		}
@@ -306,14 +323,40 @@ func (s *Service) processJob(ctx context.Context, j job) {
 		"chat", j.msg.ChatID,
 		"output", out,
 	)
+	if jobCtx.Err() == context.Canceled {
+		s.setCancelledReaction(ctx, j)
+		return
+	}
 	s.replyWithMediaDetection(ctx, j, out)
 	s.setDoneReaction(ctx, j)
 }
 
+// setReceivedReaction sets a "received/working" reaction on the original message.
+func (s *Service) setReceivedReaction(ctx context.Context, j job) {
+	s.setStatusReaction(ctx, j, "👀")
+}
+
 // setDoneReaction sets a "done" reaction on the original message.
 func (s *Service) setDoneReaction(ctx context.Context, j job) {
+	s.setStatusReaction(ctx, j, "👍")
+}
+
+// setCancelledReaction sets a "cancelled" reaction on the original message.
+func (s *Service) setCancelledReaction(ctx context.Context, j job) {
+	s.setStatusReaction(ctx, j, "❌")
+}
+
+func (s *Service) setStatusReaction(ctx context.Context, j job, emoji string) {
 	if sr, ok := j.responder.(channel.StatusReactor); ok {
-		_ = sr.SetReaction(ctx, j.msg.ChatID, j.msg.MessageID, "👍")
+		if err := sr.SetReaction(ctx, j.msg.ChatID, j.msg.MessageID, emoji); err != nil {
+			logger.Warn("status reaction failed",
+				"channel", j.msg.Channel,
+				"chat", j.msg.ChatID,
+				"msg", j.msg.MessageID,
+				"emoji", emoji,
+				"error", err,
+			)
+		}
 	}
 }
 

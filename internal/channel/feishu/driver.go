@@ -2,9 +2,10 @@ package feishu
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -21,9 +22,23 @@ import (
 
 const (
 	defaultTextChunkLimit = 4000
+	defaultMaxImageCount  = 8
 )
 
 var spaceRe = regexp.MustCompile(`\s+`)
+
+var feishuStatusEmojiTypes = map[string]string{
+	"👀":  "Typing",
+	"⏳":  "Typing",
+	"👍":  "THUMBSUP",
+	"✅":  "THUMBSUP",
+	"❌":  "ERROR",
+	"❤️": "HEART",
+	"❤":  "HEART",
+	"😀":  "SMILE",
+	"🙂":  "SMILE",
+	"😊":  "SMILE",
+}
 
 // GroupRule defines per-group access settings.
 type GroupRule struct {
@@ -186,6 +201,8 @@ type responder struct {
 	messageID     string
 	chatID        string
 	replyInThread bool
+	mu            sync.Mutex
+	reactionID    string
 }
 
 func (r *responder) Typing(ctx context.Context, msg channel.Message) error {
@@ -194,6 +211,87 @@ func (r *responder) Typing(ctx context.Context, msg channel.Message) error {
 
 func (r *responder) Reply(ctx context.Context, msg channel.Message, text string) error {
 	return r.driver.reply(ctx, r.messageID, r.chatID, r.replyInThread, text)
+}
+
+func (r *responder) SetReaction(ctx context.Context, chatID, messageID int64, emoji string) error {
+	emojiType := feishuReactionType(emoji)
+	if emojiType == "" {
+		logger.Debug("feishu skip unsupported status reaction",
+			"channel", r.driver.name,
+			"chat", chatID,
+			"msg", messageID,
+			"emoji", emoji,
+		)
+		return nil
+	}
+
+	r.mu.Lock()
+	oldReactionID := r.reactionID
+	r.reactionID = ""
+	r.mu.Unlock()
+
+	if oldReactionID != "" {
+		if err := r.driver.api.DeleteReaction(ctx, r.messageID, oldReactionID); err != nil {
+			logger.Warn("feishu delete status reaction failed",
+				"channel", r.driver.name,
+				"chat", chatID,
+				"msg", messageID,
+				"reaction_id", oldReactionID,
+				"error", err,
+			)
+			return err
+		}
+	}
+
+	reactionID, err := r.driver.api.CreateReaction(ctx, r.messageID, emojiType)
+	if err != nil {
+		logger.Warn("feishu set status reaction failed",
+			"channel", r.driver.name,
+			"chat", chatID,
+			"msg", messageID,
+			"emoji_type", emojiType,
+			"error", err,
+		)
+		return err
+	}
+
+	r.mu.Lock()
+	r.reactionID = reactionID
+	r.mu.Unlock()
+	return nil
+}
+
+func feishuReactionType(emoji string) string {
+	emoji = strings.TrimSpace(emoji)
+	if emoji == "" {
+		return ""
+	}
+	if t, ok := feishuStatusEmojiTypes[emoji]; ok {
+		return t
+	}
+	if isFeishuEmojiType(emoji) {
+		return emoji
+	}
+	return ""
+}
+
+func isFeishuEmojiType(value string) bool {
+	if value == "Typing" {
+		return true
+	}
+	for _, r := range value {
+		if r >= 'A' && r <= 'Z' {
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '_' {
+			continue
+		}
+		return false
+	}
+	return value != ""
 }
 
 func (d *Driver) handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
@@ -242,6 +340,8 @@ func (d *Driver) handleMessageEvent(ctx context.Context, event *larkim.P2Message
 		}
 	}
 
+	mediaPaths := d.downloadImageResources(ctx, messageID, stringValue(raw.MessageType), stringValue(raw.Content))
+
 	chatHash := hashStringID(d.name, chatID)
 	msgHash := hashStringID(d.name, messageID)
 	senderHash := hashStringID("", senderOpenID)
@@ -256,14 +356,16 @@ func (d *Driver) handleMessageEvent(ctx context.Context, event *larkim.P2Message
 	}
 
 	d.handler.Handle(ctx, channel.Message{
-		Channel:    d.name,
-		ChatID:     chatHash,
-		MessageID:  msgHash,
-		ThreadID:   threadID,
-		SenderID:   senderHash,
-		SenderName: senderOpenID,
-		ChatType:   chatType,
-		Text:       text,
+		Channel:      d.name,
+		ChatID:       chatHash,
+		MessageID:    msgHash,
+		ThreadID:     threadID,
+		SenderID:     senderHash,
+		SenderName:   senderOpenID,
+		ChatType:     chatType,
+		Text:         text,
+		MediaPaths:   mediaPaths,
+		CleanupPaths: mediaPaths,
 	}, &responder{
 		driver:        d,
 		messageID:     messageID,
@@ -271,6 +373,42 @@ func (d *Driver) handleMessageEvent(ctx context.Context, event *larkim.P2Message
 		replyInThread: threadID != 0,
 	})
 	return nil
+}
+
+func (d *Driver) downloadImageResources(ctx context.Context, messageID, messageType, content string) []string {
+	keys := extractImageResourceKeys(messageType, content)
+	if len(keys) == 0 {
+		return nil
+	}
+	if len(keys) > defaultMaxImageCount {
+		keys = keys[:defaultMaxImageCount]
+	}
+
+	tmpDir, err := os.MkdirTemp("", "clawdex-feishu-media-")
+	if err != nil {
+		logger.Warn("feishu create media temp dir failed", "channel", d.name, "error", err)
+		return nil
+	}
+
+	var paths []string
+	for i, key := range keys {
+		dest := filepath.Join(tmpDir, fmt.Sprintf("image_%d.jpg", i))
+		if err := d.api.DownloadResource(ctx, messageID, key, "image", dest); err != nil {
+			logger.Warn("feishu image download failed",
+				"channel", d.name,
+				"msg", messageID,
+				"image_key", key,
+				"error", err,
+			)
+			continue
+		}
+		paths = append(paths, dest)
+	}
+	if len(paths) == 0 {
+		os.RemoveAll(tmpDir)
+		return nil
+	}
+	return paths
 }
 
 type accessResult int
@@ -386,59 +524,6 @@ func (d *Driver) mentionedBot(ctx context.Context, mentions []*larkim.MentionEve
 		}
 	}
 	return false
-}
-
-func extractMessageText(msg *larkim.EventMessage) string {
-	msgType := stringValue(msg.MessageType)
-	content := stringValue(msg.Content)
-	if content == "" {
-		return ""
-	}
-
-	switch msgType {
-	case "text":
-		var c textContent
-		if err := json.Unmarshal([]byte(content), &c); err != nil {
-			return strings.TrimSpace(content)
-		}
-		return strings.TrimSpace(c.Text)
-	case "post":
-		return strings.TrimSpace(extractPostText(content))
-	case "image", "file", "audio", "media", "sticker":
-		return "[" + msgType + "]"
-	case "share_chat", "share_user":
-		return "[" + msgType + "]"
-	default:
-		return strings.TrimSpace(content)
-	}
-}
-
-func extractPostText(content string) string {
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(content), &raw); err != nil {
-		return content
-	}
-	var texts []string
-	collectPostText(raw, &texts)
-	return strings.Join(texts, "\n")
-}
-
-func collectPostText(v any, texts *[]string) {
-	switch x := v.(type) {
-	case map[string]any:
-		if tag, _ := x["tag"].(string); tag == "text" {
-			if text, _ := x["text"].(string); strings.TrimSpace(text) != "" {
-				*texts = append(*texts, strings.TrimSpace(text))
-			}
-		}
-		for _, child := range x {
-			collectPostText(child, texts)
-		}
-	case []any:
-		for _, child := range x {
-			collectPostText(child, texts)
-		}
-	}
 }
 
 func stripMentionKeys(text string, mentions []*larkim.MentionEvent) string {
