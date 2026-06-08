@@ -2,9 +2,10 @@ package feishu
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 
 const (
 	defaultTextChunkLimit = 4000
+	defaultMaxImageCount  = 8
 )
 
 var spaceRe = regexp.MustCompile(`\s+`)
@@ -338,6 +340,8 @@ func (d *Driver) handleMessageEvent(ctx context.Context, event *larkim.P2Message
 		}
 	}
 
+	mediaPaths := d.downloadImageResources(ctx, messageID, stringValue(raw.MessageType), stringValue(raw.Content))
+
 	chatHash := hashStringID(d.name, chatID)
 	msgHash := hashStringID(d.name, messageID)
 	senderHash := hashStringID("", senderOpenID)
@@ -352,14 +356,16 @@ func (d *Driver) handleMessageEvent(ctx context.Context, event *larkim.P2Message
 	}
 
 	d.handler.Handle(ctx, channel.Message{
-		Channel:    d.name,
-		ChatID:     chatHash,
-		MessageID:  msgHash,
-		ThreadID:   threadID,
-		SenderID:   senderHash,
-		SenderName: senderOpenID,
-		ChatType:   chatType,
-		Text:       text,
+		Channel:      d.name,
+		ChatID:       chatHash,
+		MessageID:    msgHash,
+		ThreadID:     threadID,
+		SenderID:     senderHash,
+		SenderName:   senderOpenID,
+		ChatType:     chatType,
+		Text:         text,
+		MediaPaths:   mediaPaths,
+		CleanupPaths: mediaPaths,
 	}, &responder{
 		driver:        d,
 		messageID:     messageID,
@@ -367,6 +373,42 @@ func (d *Driver) handleMessageEvent(ctx context.Context, event *larkim.P2Message
 		replyInThread: threadID != 0,
 	})
 	return nil
+}
+
+func (d *Driver) downloadImageResources(ctx context.Context, messageID, messageType, content string) []string {
+	keys := extractImageResourceKeys(messageType, content)
+	if len(keys) == 0 {
+		return nil
+	}
+	if len(keys) > defaultMaxImageCount {
+		keys = keys[:defaultMaxImageCount]
+	}
+
+	tmpDir, err := os.MkdirTemp("", "clawdex-feishu-media-")
+	if err != nil {
+		logger.Warn("feishu create media temp dir failed", "channel", d.name, "error", err)
+		return nil
+	}
+
+	var paths []string
+	for i, key := range keys {
+		dest := filepath.Join(tmpDir, fmt.Sprintf("image_%d.jpg", i))
+		if err := d.api.DownloadResource(ctx, messageID, key, "image", dest); err != nil {
+			logger.Warn("feishu image download failed",
+				"channel", d.name,
+				"msg", messageID,
+				"image_key", key,
+				"error", err,
+			)
+			continue
+		}
+		paths = append(paths, dest)
+	}
+	if len(paths) == 0 {
+		os.RemoveAll(tmpDir)
+		return nil
+	}
+	return paths
 }
 
 type accessResult int
@@ -482,59 +524,6 @@ func (d *Driver) mentionedBot(ctx context.Context, mentions []*larkim.MentionEve
 		}
 	}
 	return false
-}
-
-func extractMessageText(msg *larkim.EventMessage) string {
-	msgType := stringValue(msg.MessageType)
-	content := stringValue(msg.Content)
-	if content == "" {
-		return ""
-	}
-
-	switch msgType {
-	case "text":
-		var c textContent
-		if err := json.Unmarshal([]byte(content), &c); err != nil {
-			return strings.TrimSpace(content)
-		}
-		return strings.TrimSpace(c.Text)
-	case "post":
-		return strings.TrimSpace(extractPostText(content))
-	case "image", "file", "audio", "media", "sticker":
-		return "[" + msgType + "]"
-	case "share_chat", "share_user":
-		return "[" + msgType + "]"
-	default:
-		return strings.TrimSpace(content)
-	}
-}
-
-func extractPostText(content string) string {
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(content), &raw); err != nil {
-		return content
-	}
-	var texts []string
-	collectPostText(raw, &texts)
-	return strings.Join(texts, "\n")
-}
-
-func collectPostText(v any, texts *[]string) {
-	switch x := v.(type) {
-	case map[string]any:
-		if tag, _ := x["tag"].(string); tag == "text" {
-			if text, _ := x["text"].(string); strings.TrimSpace(text) != "" {
-				*texts = append(*texts, strings.TrimSpace(text))
-			}
-		}
-		for _, child := range x {
-			collectPostText(child, texts)
-		}
-	case []any:
-		for _, child := range x {
-			collectPostText(child, texts)
-		}
-	}
 }
 
 func stripMentionKeys(text string, mentions []*larkim.MentionEvent) string {

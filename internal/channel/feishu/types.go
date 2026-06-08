@@ -11,5 +11,6 @@ type messageAPI interface {
 	SendText(ctx context.Context, chatID, text string) error
 	CreateReaction(ctx context.Context, messageID, emojiType string) (string, error)
 	DeleteReaction(ctx context.Context, messageID, reactionID string) error
+	DownloadResource(ctx context.Context, messageID, fileKey, resourceType, destPath string) error
 	BotOpenID(ctx context.Context) (string, error)
 }

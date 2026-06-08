@@ -1893,23 +1893,27 @@ func TestExtractFilePaths_HomePathNonExistent(t *testing.T) {
 
 // ── cleanupMediaDirs tests ──
 
-func TestCleanupMediaDirs_RemovesMatchingDirs(t *testing.T) {
-	// Create a temp dir that matches the pattern.
-	tmpDir, err := os.MkdirTemp("", "clawdex-tg-media-")
-	require.NoError(t, err)
+func TestCleanupMediaDirs_RemovesChannelMediaTempDirs(t *testing.T) {
+	for _, prefix := range []string{
+		"clawdex-tg-media-",
+		"clawdex-wecom-media-",
+		"clawdex-qqbot-media-",
+		"clawdex-wx-media-",
+		"clawdex-feishu-media-",
+	} {
+		t.Run(prefix, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", prefix)
+			require.NoError(t, err)
 
-	f := filepath.Join(tmpDir, "photo.jpg")
-	require.NoError(t, os.WriteFile(f, []byte("img"), 0o644))
+			f := filepath.Join(tmpDir, "media.dat")
+			require.NoError(t, os.WriteFile(f, []byte("data"), 0o644))
 
-	// Verify it exists.
-	_, err = os.Stat(tmpDir)
-	require.NoError(t, err)
+			cleanupMediaDirs([]string{f})
 
-	cleanupMediaDirs([]string{f})
-
-	// Should be removed.
-	_, err = os.Stat(tmpDir)
-	assert.True(t, os.IsNotExist(err))
+			_, err = os.Stat(tmpDir)
+			assert.True(t, os.IsNotExist(err))
+		})
+	}
 }
 
 func TestCleanupMediaDirs_IgnoresNonMatchingDirs(t *testing.T) {
@@ -1930,17 +1934,17 @@ func TestCleanupMediaDirs_EmptyPaths(t *testing.T) {
 	cleanupMediaDirs([]string{})
 }
 
-func TestCleanupMediaDirs_WeComMediaDir(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "clawdex-wecom-media-")
-	require.NoError(t, err)
+func TestCleanupMediaDirs_IgnoresMatchingNameOutsideTempRoot(t *testing.T) {
+	root := t.TempDir()
+	tmpDir := filepath.Join(root, "clawdex-wecom-media-local")
+	require.NoError(t, os.Mkdir(tmpDir, 0o755))
 
 	f := filepath.Join(tmpDir, "audio.wav")
 	require.NoError(t, os.WriteFile(f, []byte("wav"), 0o644))
-
 	cleanupMediaDirs([]string{f})
 
-	_, err = os.Stat(tmpDir)
-	assert.True(t, os.IsNotExist(err))
+	_, err := os.Stat(tmpDir)
+	assert.NoError(t, err)
 }
 
 func TestCleanupMediaDirs_MultipleSets(t *testing.T) {

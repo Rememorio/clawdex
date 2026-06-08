@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -78,4 +80,36 @@ func TestLarkMessageAPI_DeleteReaction(t *testing.T) {
 
 	assert.Equal(t, http.MethodDelete, gotMethod)
 	assert.Equal(t, "/open-apis/im/v1/messages/om_msg/reactions/reaction_1", gotPath)
+}
+
+func TestLarkMessageAPI_DownloadResource(t *testing.T) {
+	var gotMethod, gotPath, gotType string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"code":0,"msg":"ok","tenant_access_token":"tenant-token","expire":7200}`)
+		case "/open-apis/im/v1/messages/om_msg/resources/img_key":
+			gotMethod = r.Method
+			gotPath = r.URL.Path
+			gotType = r.URL.Query().Get("type")
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("image-bytes"))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	api := newMessageAPI("cli_test", "secret_test", server.URL, "fs")
+	dest := filepath.Join(t.TempDir(), "image.png")
+	err := api.DownloadResource(context.Background(), "om_msg", "img_key", "image", dest)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(dest)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("image-bytes"), data)
+	assert.Equal(t, http.MethodGet, gotMethod)
+	assert.Equal(t, "/open-apis/im/v1/messages/om_msg/resources/img_key", gotPath)
+	assert.Equal(t, "image", gotType)
 }

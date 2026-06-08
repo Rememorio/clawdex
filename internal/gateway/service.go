@@ -137,9 +137,9 @@ func (s *Service) Run(ctx context.Context, drivers ...channel.Driver) error {
 	}
 }
 
-// cleanupMediaDirs removes temp directories created by downloadMedia.
-// It collects unique parent dirs matching the clawdex-tg-media- or
-// clawdex-wecom-media- prefix and removes them.
+// cleanupMediaDirs removes temp directories created by channel media downloaders.
+// CleanupPaths is the channel-owned cleanup contract; the gateway only removes
+// clawdex media dirs under the system temp root.
 func cleanupMediaDirs(pathSets ...[]string) {
 	seen := make(map[string]bool)
 	for _, paths := range pathSets {
@@ -149,12 +149,28 @@ func cleanupMediaDirs(pathSets ...[]string) {
 				continue
 			}
 			seen[dir] = true
-			base := filepath.Base(dir)
-			if strings.Contains(base, "clawdex-tg-media-") || strings.Contains(base, "clawdex-wecom-media-") {
+			if isClawdexMediaTempDir(dir) {
 				os.RemoveAll(dir)
 			}
 		}
 	}
+}
+
+func isClawdexMediaTempDir(dir string) bool {
+	base := filepath.Base(dir)
+	if !strings.HasPrefix(base, "clawdex-") || !strings.Contains(base, "-media-") {
+		return false
+	}
+
+	parent := filepath.Clean(filepath.Dir(dir))
+	tmpRoot := filepath.Clean(os.TempDir())
+	if evalParent, err := filepath.EvalSymlinks(parent); err == nil {
+		parent = evalParent
+	}
+	if evalRoot, err := filepath.EvalSymlinks(tmpRoot); err == nil {
+		tmpRoot = evalRoot
+	}
+	return parent == tmpRoot
 }
 
 // resolveSandbox returns the sandbox level to use for a given message.

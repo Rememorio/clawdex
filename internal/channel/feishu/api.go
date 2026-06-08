@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"sync"
 
@@ -13,6 +15,8 @@ import (
 
 	"github.com/Rememorio/clawdex/internal/logger"
 )
+
+const maxResourceDownloadBytes = 20 * 1024 * 1024
 
 type sdkLogger struct {
 	channel string
@@ -189,6 +193,52 @@ func (a *larkMessageAPI) DeleteReaction(ctx context.Context, messageID, reaction
 	}
 	if !resp.Success() {
 		return fmt.Errorf("feishu delete reaction: code=%d msg=%s log_id=%s", resp.Code, resp.Msg, resp.RequestId())
+	}
+	return nil
+}
+
+func (a *larkMessageAPI) DownloadResource(ctx context.Context, messageID, fileKey, resourceType, destPath string) error {
+	messageID = strings.TrimSpace(messageID)
+	fileKey = strings.TrimSpace(fileKey)
+	resourceType = strings.TrimSpace(resourceType)
+	destPath = strings.TrimSpace(destPath)
+	if messageID == "" {
+		return fmt.Errorf("feishu download resource: missing message_id")
+	}
+	if fileKey == "" {
+		return fmt.Errorf("feishu download resource: missing file_key")
+	}
+	if resourceType == "" {
+		return fmt.Errorf("feishu download resource: missing type")
+	}
+	if destPath == "" {
+		return fmt.Errorf("feishu download resource: missing destination")
+	}
+
+	resp, err := a.client.Im.MessageResource.Get(ctx, larkim.NewGetMessageResourceReqBuilder().
+		MessageId(messageID).
+		FileKey(fileKey).
+		Type(resourceType).
+		Build())
+	if err != nil {
+		return fmt.Errorf("feishu download resource: %w", err)
+	}
+	if !resp.Success() {
+		return fmt.Errorf("feishu download resource: code=%d msg=%s log_id=%s", resp.Code, resp.Msg, resp.RequestId())
+	}
+	if resp.File == nil {
+		return fmt.Errorf("feishu download resource: empty file")
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.File, maxResourceDownloadBytes+1))
+	if err != nil {
+		return fmt.Errorf("read feishu resource: %w", err)
+	}
+	if len(data) > maxResourceDownloadBytes {
+		return fmt.Errorf("feishu resource exceeds %d bytes", maxResourceDownloadBytes)
+	}
+	if err := os.WriteFile(destPath, data, 0o600); err != nil {
+		return fmt.Errorf("write feishu resource: %w", err)
 	}
 	return nil
 }

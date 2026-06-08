@@ -14,7 +14,8 @@ Key characteristics:
 - **Official API** — uses `github.com/larksuite/oapi-sdk-go/v3`.
 - **DM + Group** — supports private chats and group chats.
 - **Safe group default** — group messages require @bot by default.
-- **Text replies** — text messages are supported first; media can be added later.
+- **Text + inbound images** — handles text, rich text, voice transcripts, and
+  image resources that Codex can inspect.
 - **Status reactions** — adds a `Typing` reaction while Codex is working and
   replaces it with `THUMBSUP` on completion or `ERROR` on cancellation.
 
@@ -29,6 +30,7 @@ Key characteristics:
    - Read messages users send to the bot in private chats.
    - Read @bot messages in groups.
    - Read all group messages, if you need it. Keep `require_mention: true`.
+   - Read/download message resources, if users will send images.
    - Add and delete message reactions, if you want status reactions.
 7. Publish the app changes.
 
@@ -156,6 +158,13 @@ driver deletes the old reaction and adds `THUMBSUP`; cancelled runs use
 `ERROR`. If the bot lacks reaction permissions or the message cannot be reacted
 to, clawdex logs a warning and continues sending the text reply.
 
+## Image Messages
+
+For `image` messages and images embedded in Feishu rich text (`post`) messages,
+clawdex downloads the image resources to a temporary directory and passes those
+local image paths to Codex. Non-image attachments are represented as text
+placeholders for now.
+
 ## Troubleshooting
 
 - If the gateway logs long-connection authentication errors, verify `app_id` and `app_secret`.
@@ -165,3 +174,5 @@ to, clawdex logs a warning and continues sending the text reply.
 - If group messages arrive but clawdex does not respond, check `group_policy`, `group_allow_from`, and `require_mention`.
 - If status reactions do not appear, grant the app message reaction permissions
   and republish the app.
+- If image messages are received as placeholders only, grant the app message
+  resource permissions and republish it.
