@@ -407,6 +407,13 @@ func (s *Service) setStatusReaction(ctx context.Context, j job, emoji string) {
 
 // replyCommand dispatches a command response, using keyboard if available.
 func (s *Service) replyCommand(ctx context.Context, j job, resp commandResponse) {
+	if resp.textOnly {
+		if err := j.responder.Reply(ctx, j.msg, resp.text); err != nil {
+			logger.Error("reply failed", "channel", j.msg.Channel, "chat", j.msg.ChatID, "error", err)
+		}
+		return
+	}
+
 	// For /sessions, try the rich session card first.
 	if resp.sessionCard != nil {
 		if scr, ok := j.responder.(channel.SessionCardResponder); ok {

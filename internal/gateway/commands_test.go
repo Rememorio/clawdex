@@ -42,6 +42,7 @@ func TestHandleCommand_Help(t *testing.T) {
 	assert.Contains(t, resp.text, "/cron list")
 	assert.Contains(t, resp.text, "/cron status <id|index|name>")
 	assert.Less(t, strings.Index(resp.text, "/cron —"), strings.Index(resp.text, "/cancel —"))
+	assert.True(t, resp.textOnly)
 }
 
 func TestHandleCommand_Help_AlwaysHasKeyboard(t *testing.T) {
@@ -90,6 +91,7 @@ func TestHandleCommand_Help_HasSessionCard(t *testing.T) {
 	require.Len(t, resp.sessionCard.Buttons, 2)
 	assert.Equal(t, "/sessions", resp.sessionCard.Buttons[0].Text)
 	assert.Equal(t, "/status", resp.sessionCard.Buttons[1].Text)
+	assert.True(t, resp.textOnly)
 }
 
 func TestHandleCommand_Help_GroupNoCard(t *testing.T) {

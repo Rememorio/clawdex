@@ -328,11 +328,11 @@ func TestRun_HelpWithKeyboard(t *testing.T) {
 	resp.mu.Lock()
 	defer resp.mu.Unlock()
 
-	require.NotNil(t, resp.keyboardCall)
-	assert.Contains(t, resp.keyboardCall.Text, "Available commands")
-	require.Len(t, resp.keyboardCall.Keyboard, 1)
-	require.Len(t, resp.keyboardCall.Keyboard[0], 3)
-	assert.Equal(t, "/new", resp.keyboardCall.Keyboard[0][0].CallbackData)
+	assert.Nil(t, resp.keyboardCall)
+	require.Len(t, resp.replies, 1)
+	assert.Contains(t, resp.replies[0].Text, "Available commands")
+	assert.Contains(t, resp.replies[0].Text, "/cron — Manage scheduled jobs")
+	assert.Contains(t, resp.replies[0].Text, "/cron list")
 }
 
 func TestRun_HelpFallbackPlainText(t *testing.T) {
@@ -390,11 +390,11 @@ func TestRun_WeComHelpWithKeyboard(t *testing.T) {
 	resp.mu.Lock()
 	defer resp.mu.Unlock()
 
-	require.NotNil(t, resp.keyboardCall)
-	assert.Contains(t, resp.keyboardCall.Text, "Available commands")
-	require.Len(t, resp.keyboardCall.Keyboard, 1)
-	require.Len(t, resp.keyboardCall.Keyboard[0], 3)
-	assert.Equal(t, "/new", resp.keyboardCall.Keyboard[0][0].CallbackData)
+	assert.Nil(t, resp.keyboardCall)
+	require.Len(t, resp.replies, 1)
+	assert.Contains(t, resp.replies[0].Text, "Available commands")
+	assert.Contains(t, resp.replies[0].Text, "/cron — Manage scheduled jobs")
+	assert.Contains(t, resp.replies[0].Text, "/cron list")
 }
 
 // ── Feature 2: Streaming ──

@@ -38,6 +38,7 @@ type commandResponse struct {
 	text        string
 	keyboard    [][]keyboardButton
 	sessionCard *channel.SessionCard // rich session card (optional, WeCom-style)
+	textOnly    bool                 // force plain text delivery for long command output
 }
 
 // commandHandlers maps command names to their handler functions.
@@ -177,6 +178,7 @@ func cmdHelp(_ *codex.Client, msg channel.Message, _ string) commandResponse {
 		text:        b.String(),
 		keyboard:    keyboard,
 		sessionCard: card,
+		textOnly:    true,
 	}
 }
 
