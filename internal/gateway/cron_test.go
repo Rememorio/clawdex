@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -123,6 +124,7 @@ type testProactiveSender struct {
 	name   string
 	target channel.DeliveryTarget
 	text   string
+	texts  []string
 }
 
 func (s *testProactiveSender) Name() string { return s.name }
@@ -130,6 +132,7 @@ func (s *testProactiveSender) Name() string { return s.name }
 func (s *testProactiveSender) SendText(ctx context.Context, target channel.DeliveryTarget, text string) error {
 	s.target = target
 	s.text = text
+	s.texts = append(s.texts, text)
 	return nil
 }
 
@@ -142,30 +145,6 @@ func TestDeliverCronUsesRegisteredSender(t *testing.T) {
 	require.NoError(t, svc.DeliverCron(context.Background(), target, "hello"))
 	assert.Equal(t, target, sender.target)
 	assert.Equal(t, "hello", sender.text)
-}
-
-func TestCronToolNotifyDeliversToContextTarget(t *testing.T) {
-	svc := newCronTestService(t)
-	sender := &testProactiveSender{name: "telegram"}
-	svc.RegisterSender(sender)
-	token := svc.newCronContext(channel.Message{
-		Channel: "telegram",
-		ChatID:  42,
-		Target:  "42",
-	})
-
-	out := callCronTool(t, svc, map[string]any{
-		"token":   token,
-		"action":  "notify",
-		"title":   "Report",
-		"content": "hello",
-	})
-
-	require.True(t, out.OK, out.Error)
-	assert.Equal(t, channel.DeliveryTarget{Channel: "telegram", ChatID: 42, Target: "42"}, sender.target)
-	assert.Equal(t, "Report\n\nhello", sender.text)
-	assert.True(t, svc.consumeCronNotified(token))
-	assert.False(t, svc.consumeCronNotified(token))
 }
 
 func TestCronAgentScopeIDIsStableAndIsolated(t *testing.T) {
@@ -198,4 +177,71 @@ func TestCronAgentOutputError(t *testing.T) {
 	assert.ErrorContains(t, cronAgentOutputError("codex failed: exit status 1"), "exit status 1")
 	assert.ErrorContains(t, cronAgentOutputError("codex command timeout"), "timeout")
 	assert.ErrorContains(t, cronAgentOutputError("failed to create temporary directory: denied"), "temporary directory")
+}
+
+func TestParseCronAgentJSONMessages(t *testing.T) {
+	out := "```json\n" + `{"messages":[{"title":"Batch 1","text":"hello"},{"title":"Batch 2","content":"world"}]}` + "\n```"
+
+	messages := parseCronAgentMessages(out)
+
+	require.Equal(t, []string{
+		"Batch 1\n\nhello",
+		"Batch 2\n\nworld",
+	}, messages)
+}
+
+func TestParseCronAgentDelimitedMessages(t *testing.T) {
+	out := cronAgentMessageDelimiter + "\nfirst\n" + cronAgentMessageDelimiter + "\nsecond\n"
+
+	messages := parseCronAgentMessages(out)
+
+	require.Equal(t, []string{"first", "second"}, messages)
+}
+
+func TestParseCronAgentMessageAliases(t *testing.T) {
+	out := `{"notifications":[{"title":"Notice","text":"body"}]}`
+
+	messages := parseCronAgentMessages(out)
+
+	require.Equal(t, []string{"Notice\n\nbody"}, messages)
+}
+
+func TestRunCronAgentDeliversEnvelopeMessages(t *testing.T) {
+	binDir := t.TempDir()
+	script := filepath.Join(binDir, "codex")
+	argsFile := filepath.Join(t.TempDir(), "args.txt")
+	scriptContent := `#!/bin/sh
+echo "$@" > ` + argsFile + `
+echo '{"type":"thread.started","thread_id":"cron-agent"}'
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"{\"messages\":[{\"title\":\"One\",\"text\":\"first\"},{\"title\":\"Two\",\"text\":\"second\"}]}"}}'
+`
+	require.NoError(t, os.WriteFile(script, []byte(scriptContent), 0o755))
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	svc := New(&codex.Client{
+		WorkDir:        t.TempDir(),
+		Timeout:        10 * time.Second,
+		CronMCPEnabled: true,
+		Store:          codex.NewSessionStore(filepath.Join(t.TempDir(), "sessions.json")),
+	}, 1, "off")
+	sender := &testProactiveSender{name: "telegram"}
+	svc.RegisterSender(sender)
+	job := cronjob.Job{
+		ID:      "cron_agent",
+		Payload: cronjob.Payload{Kind: cronjob.PayloadAgent, Text: "send two messages"},
+		Delivery: channel.DeliveryTarget{
+			Channel: "telegram",
+			ChatID:  42,
+			Target:  "42",
+		},
+	}
+
+	text, err := svc.RunCronAgent(context.Background(), job)
+
+	assert.ErrorIs(t, err, cronjob.ErrAlreadyDelivered)
+	assert.Empty(t, text)
+	assert.Equal(t, []string{"One\n\nfirst", "Two\n\nsecond"}, sender.texts)
+	argsData, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	assert.NotContains(t, string(argsData), "mcp_servers.clawdex_cron")
 }

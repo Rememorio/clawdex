@@ -51,27 +51,6 @@ func TestServeToolsList(t *testing.T) {
 	assert.Contains(t, tool["description"], "scheduled jobs")
 }
 
-func TestServeToolsListNotifyMode(t *testing.T) {
-	t.Setenv("CLAWDEX_MCP_TOOLS", "notify")
-	var out bytes.Buffer
-	in := bytes.NewBufferString(frameMessage(t, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "tools/list",
-	}))
-	s := NewCronServer(in, &out)
-
-	require.NoError(t, s.Serve(context.Background()))
-	resp := readResponse(t, &out)
-	require.Nil(t, resp.Error)
-	result := resp.Result.(map[string]any)
-	tools := result["tools"].([]any)
-	require.Len(t, tools, 1)
-	tool := tools[0].(map[string]any)
-	assert.Equal(t, notifyToolName, tool["name"])
-	assert.Contains(t, tool["description"], "proactive message")
-}
-
 func TestServeResourcesList(t *testing.T) {
 	var out bytes.Buffer
 	in := bytes.NewBufferString(frameMessage(t, map[string]any{
@@ -128,50 +107,6 @@ func TestToolCallForwardsToGateway(t *testing.T) {
 	require.Len(t, content, 1)
 	text := content[0].(map[string]any)["text"].(string)
 	assert.Contains(t, text, `"jobs": []`)
-}
-
-func TestNotifyToolCallForwardsToGateway(t *testing.T) {
-	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/cron/tool", r.URL.Path)
-		var body map[string]any
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		assert.Equal(t, "notify", body["action"])
-		assert.Equal(t, "token-123", body["token"])
-		assert.Equal(t, "Batch 1", body["title"])
-		assert.Equal(t, "hello", body["text"])
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":     true,
-			"result": map[string]any{"delivered": true},
-		})
-	}))
-	defer gateway.Close()
-
-	t.Setenv("CLAWDEX_GATEWAY_URL", gateway.URL)
-	t.Setenv("CLAWDEX_CRON_CONTEXT_TOKEN", "token-123")
-	t.Setenv("CLAWDEX_MCP_TOOLS", "notify")
-
-	var out bytes.Buffer
-	in := bytes.NewBufferString(frameMessage(t, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      7,
-		"method":  "tools/call",
-		"params": map[string]any{
-			"name":      notifyToolName,
-			"arguments": map[string]any{"title": "Batch 1", "text": "hello"},
-		},
-	}))
-	s := NewCronServer(in, &out)
-	s.httpClient = gateway.Client()
-
-	require.NoError(t, s.Serve(context.Background()))
-	resp := readResponse(t, &out)
-	require.Nil(t, resp.Error)
-	result := resp.Result.(map[string]any)
-	content := result["content"].([]any)
-	require.Len(t, content, 1)
-	text := content[0].(map[string]any)["text"].(string)
-	assert.Contains(t, text, `"delivered": true`)
 }
 
 func TestToolCallRequiresContextToken(t *testing.T) {

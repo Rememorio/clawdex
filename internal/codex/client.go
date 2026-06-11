@@ -150,7 +150,6 @@ type RunOptions struct {
 	Channel          string
 	CronContextToken string
 	DisableCronMCP   bool
-	MCPTools         []string
 }
 
 // executableName returns the codex binary name to use.
@@ -191,9 +190,6 @@ func (c *Client) extraEnv(opts RunOptions) []string {
 	}
 	if opts.CronContextToken != "" {
 		env = append(env, "CLAWDEX_CRON_CONTEXT_TOKEN="+opts.CronContextToken)
-	}
-	if len(opts.MCPTools) > 0 {
-		env = append(env, "CLAWDEX_MCP_TOOLS="+strings.Join(opts.MCPTools, ","))
 	}
 	return env
 }

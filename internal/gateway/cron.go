@@ -21,6 +21,7 @@ import (
 )
 
 const cronContextTTL = 2 * time.Hour
+const cronAgentMessageDelimiter = "<<<CLAWDEX_MESSAGE>>>"
 
 type cronToolRequest struct {
 	Token           string           `json:"token"`
@@ -31,8 +32,6 @@ type cronToolRequest struct {
 	JobID           string           `json:"job_id,omitempty"`
 	Patch           cronToolPatch    `json:"patch,omitempty"`
 	Text            string           `json:"text,omitempty"`
-	Title           string           `json:"title,omitempty"`
-	Content         string           `json:"content,omitempty"`
 	Schedule        cronjob.Schedule `json:"schedule,omitempty"`
 	Payload         cronjob.Payload  `json:"payload,omitempty"`
 	Name            string           `json:"name,omitempty"`
@@ -218,16 +217,6 @@ func (s *Service) dispatchCronTool(ctx context.Context, cronCtx cronContext, req
 			return nil, err
 		}
 		return result, nil
-	case "notify":
-		text := formatCronNotifyText(req)
-		if strings.TrimSpace(text) == "" {
-			return nil, fmt.Errorf("notify text is required")
-		}
-		if err := s.DeliverCron(ctx, cronCtx.Delivery, text); err != nil {
-			return nil, err
-		}
-		s.markCronNotified(req.Token)
-		return map[string]any{"delivered": true}, nil
 	default:
 		return nil, fmt.Errorf("unsupported cron action %q", req.Action)
 	}
@@ -275,53 +264,137 @@ func (s *Service) RunCronAgent(ctx context.Context, job cronjob.Job) (string, er
 		Target:   job.Delivery.Target,
 		Text:     job.Payload.Text,
 	}
-	cronToken := s.newCronContext(msg)
-	s.logCronContext(msg, cronToken)
-	prompt := "[scheduled task]\nCurrent time: " +
-		time.Now().Format(time.RFC3339) + "\n\n" + job.Payload.Text
+	prompt := cronAgentPrompt(job.Payload.Text, time.Now())
 	out := s.codexClient.RunWithOptions(ctx, scopeID, prompt, nil, codex.RunOptions{
-		Sandbox:          s.resolveSandbox(msg),
-		Channel:          job.Delivery.Channel,
-		CronContextToken: cronToken,
-		MCPTools:         []string{"notify"},
+		Sandbox:        s.resolveSandbox(msg),
+		Channel:        job.Delivery.Channel,
+		DisableCronMCP: true,
 	})
 	out = stripThinkingTags(out)
 	if err := cronAgentOutputError(out); err != nil {
 		return "", err
 	}
-	if s.consumeCronNotified(cronToken) {
+	messages := parseCronAgentMessages(out)
+	if len(messages) > 0 {
+		for _, message := range messages {
+			if err := s.DeliverCron(ctx, job.Delivery, message); err != nil {
+				return "", err
+			}
+		}
 		return "", cronjob.ErrAlreadyDelivered
 	}
 	return out, nil
 }
 
-func formatCronNotifyText(req cronToolRequest) string {
-	text := strings.TrimSpace(firstNonEmpty(req.Text, req.Content))
-	title := strings.TrimSpace(req.Title)
-	switch {
-	case title == "":
+type cronAgentEnvelope struct {
+	Messages      []cronAgentMessage `json:"messages"`
+	Batches       []cronAgentMessage `json:"batches"`
+	Parts         []cronAgentMessage `json:"parts"`
+	Notifications []cronAgentMessage `json:"notifications"`
+}
+
+type cronAgentMessage struct {
+	Title   string `json:"title"`
+	Text    string `json:"text"`
+	Content string `json:"content"`
+}
+
+func cronAgentPrompt(task string, now time.Time) string {
+	return "[scheduled task]\nCurrent time: " + now.Format(time.RFC3339) + "\n\n" +
+		"clawdex delivery instructions:\n" +
+		"- Do not call notify or any external messaging tool from this scheduled run.\n" +
+		"- If the user asks for multiple pushes, batches, parts, or notify calls, return all messages in the JSON envelope below and clawdex will deliver them sequentially to the originating chat.\n" +
+		"- Return only this JSON object when using multiple messages: {\"messages\":[{\"title\":\"...\",\"text\":\"...\"}]}.\n" +
+		"- Each messages entry becomes one proactive chat message. Put the requested title in title and the body in text.\n" +
+		"- If there is only one final response, normal text is acceptable.\n" +
+		"- If an error occurs after you can still write a response, include the error explanation in the appropriate message entry.\n\n" +
+		"user task:\n" + task
+}
+
+func parseCronAgentMessages(out string) []string {
+	if messages := parseCronAgentJSONMessages(out); len(messages) > 0 {
+		return messages
+	}
+	return parseCronAgentDelimitedMessages(out)
+}
+
+func parseCronAgentJSONMessages(out string) []string {
+	raw := extractCronAgentJSON(out)
+	if raw == "" {
+		return nil
+	}
+	var env cronAgentEnvelope
+	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+		return nil
+	}
+	items := env.Messages
+	if len(items) == 0 {
+		items = env.Batches
+	}
+	if len(items) == 0 {
+		items = env.Parts
+	}
+	if len(items) == 0 {
+		items = env.Notifications
+	}
+	return formatCronAgentMessages(items)
+}
+
+func extractCronAgentJSON(out string) string {
+	text := strings.TrimSpace(out)
+	if text == "" {
+		return ""
+	}
+	if strings.HasPrefix(text, "```") {
+		lines := strings.Split(text, "\n")
+		if len(lines) >= 3 {
+			text = strings.Join(lines[1:len(lines)-1], "\n")
+			text = strings.TrimSpace(text)
+		}
+	}
+	if strings.HasPrefix(text, "{") && strings.HasSuffix(text, "}") {
 		return text
-	case text == "":
-		return title
-	default:
-		return title + "\n\n" + text
 	}
+	start := strings.Index(text, "{")
+	end := strings.LastIndex(text, "}")
+	if start >= 0 && end > start {
+		return text[start : end+1]
+	}
+	return ""
 }
 
-func (s *Service) markCronNotified(token string) {
-	token = strings.TrimSpace(token)
-	if token != "" {
-		s.cronNotified.Store(token, true)
+func formatCronAgentMessages(items []cronAgentMessage) []string {
+	var out []string
+	for _, item := range items {
+		text := strings.TrimSpace(firstNonEmpty(item.Text, item.Content))
+		title := strings.TrimSpace(item.Title)
+		switch {
+		case title == "" && text == "":
+			continue
+		case title == "":
+			out = append(out, text)
+		case text == "":
+			out = append(out, title)
+		default:
+			out = append(out, title+"\n\n"+text)
+		}
 	}
+	return out
 }
 
-func (s *Service) consumeCronNotified(token string) bool {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return false
+func parseCronAgentDelimitedMessages(out string) []string {
+	if !strings.Contains(out, cronAgentMessageDelimiter) {
+		return nil
 	}
-	_, ok := s.cronNotified.LoadAndDelete(token)
-	return ok
+	parts := strings.Split(out, cronAgentMessageDelimiter)
+	messages := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			messages = append(messages, part)
+		}
+	}
+	return messages
 }
 
 func cronAgentScopeID(job cronjob.Job) int64 {

@@ -208,11 +208,9 @@ func TestRun_CronMCPArgsIncludeContextTokenEnv(t *testing.T) {
 	script := filepath.Join(binDir, "codex")
 	argsFile := filepath.Join(t.TempDir(), "args.txt")
 	envFile := filepath.Join(t.TempDir(), "env.txt")
-	toolsFile := filepath.Join(t.TempDir(), "tools.txt")
 	scriptContent := `#!/bin/sh
 echo "$@" > ` + argsFile + `
 echo "$CLAWDEX_CRON_CONTEXT_TOKEN" > ` + envFile + `
-echo "$CLAWDEX_MCP_TOOLS" > ` + toolsFile + `
 `
 	require.NoError(t, os.WriteFile(script, []byte(scriptContent), 0o755))
 	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
@@ -227,7 +225,6 @@ echo "$CLAWDEX_MCP_TOOLS" > ` + toolsFile + `
 
 	c.RunWithOptions(context.Background(), 1, "test prompt", nil, RunOptions{
 		CronContextToken: "token-123",
-		MCPTools:         []string{"notify"},
 	})
 
 	argsData, err := os.ReadFile(argsFile)
@@ -237,10 +234,6 @@ echo "$CLAWDEX_MCP_TOOLS" > ` + toolsFile + `
 	envData, err := os.ReadFile(envFile)
 	require.NoError(t, err)
 	assert.Equal(t, "token-123", strings.TrimSpace(string(envData)))
-
-	toolsData, err := os.ReadFile(toolsFile)
-	require.NoError(t, err)
-	assert.Equal(t, "notify", strings.TrimSpace(string(toolsData)))
 }
 
 func TestRun_SoulContentInjected(t *testing.T) {
