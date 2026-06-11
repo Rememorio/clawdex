@@ -37,6 +37,8 @@ func TestHandleCommand_Help(t *testing.T) {
 	assert.Contains(t, resp.text, "/status")
 	assert.Contains(t, resp.text, "/sessions")
 	assert.Contains(t, resp.text, "/resume")
+	assert.Contains(t, resp.text, "/cron list")
+	assert.Contains(t, resp.text, "/cron status <id|index|name>")
 }
 
 func TestHandleCommand_Help_AlwaysHasKeyboard(t *testing.T) {

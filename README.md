@@ -230,6 +230,7 @@ Available in Telegram, WeCom, Weixin, QQ Bot, and Feishu:
 | `/resume <id>` | Switch to an existing session |
 | `/cancel` | Cancel the running task |
 | `/status` | Show current chat context: channel, scope, session, SOUL.md |
+| `/cron help` | Show scheduled job commands |
 | `/cron list` | List scheduled jobs for the current chat |
 | `/cron status <id\|index\|name>` | Show a scheduled job |
 | `/cron stop <id\|index\|name>` | Disable a scheduled job |

@@ -139,6 +139,7 @@ func cmdHelp(_ *codex.Client, msg channel.Message, _ string) commandResponse {
 		}
 		fmt.Fprintf(&b, "  %s — %s\n", def.name, def.help)
 	}
+	appendCronHelpSection(&b)
 
 	// Build keyboard, filtering out group-disabled commands.
 	allButtons := []keyboardButton{

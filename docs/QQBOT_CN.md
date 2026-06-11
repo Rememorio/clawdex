@@ -170,6 +170,13 @@ Codex 输出中包含文件路径时，网关通过 QQ 富媒体 API 上传
 | `/sessions` | 列出最近会话 |
 | `/resume <id>` | 切换到已有会话 |
 | `/cancel` | 取消当前运行中的任务 |
+| `/cron help` | 显示定时任务命令 |
+| `/cron list` | 列出当前聊天的定时任务 |
+| `/cron status <id\|序号\|名称>` | 查看定时任务详情 |
+| `/cron stop <id\|序号\|名称>` | 暂停定时任务 |
+| `/cron resume <id\|序号\|名称>` | 恢复定时任务 |
+| `/cron remove <id\|序号\|名称>` | 删除定时任务 |
+| `/cron clear` | 删除当前聊天的所有定时任务 |
 | `/status` | 显示当前聊天上下文 |
 
 ## SOUL.md

@@ -38,6 +38,7 @@ Use `/cron` commands in the same chat that owns the job:
 
 | Command | Description |
 |---------|-------------|
+| `/cron help` | Show scheduled job commands |
 | `/cron list` | List scheduled jobs for the current chat |
 | `/cron status <id\|index\|name>` | Show a job |
 | `/cron stop <id\|index\|name>` | Disable a job |

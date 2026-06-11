@@ -148,6 +148,26 @@ export FEISHU_GROUP_POLICY="allowlist"
 export FEISHU_GROUP_ALLOW_FROM="oc_xxx"
 ```
 
+## 机器人命令
+
+支持所有 clawdex 标准命令：
+
+| 命令 | 说明 |
+|------|------|
+| `/help` | 显示可用命令 |
+| `/new` | 开始新对话 |
+| `/sessions` | 列出最近会话 |
+| `/resume <id>` | 切换到已有会话 |
+| `/cancel` | 取消当前运行中的任务 |
+| `/cron help` | 显示定时任务命令 |
+| `/cron list` | 列出当前聊天的定时任务 |
+| `/cron status <id\|序号\|名称>` | 查看定时任务详情 |
+| `/cron stop <id\|序号\|名称>` | 暂停定时任务 |
+| `/cron resume <id\|序号\|名称>` | 恢复定时任务 |
+| `/cron remove <id\|序号\|名称>` | 删除定时任务 |
+| `/cron clear` | 删除当前聊天的所有定时任务 |
+| `/status` | 显示当前聊天上下文 |
+
 ## 状态表情
 
 普通 Codex 任务开始时，clawdex 会先在原消息上添加飞书 `Typing` reaction。

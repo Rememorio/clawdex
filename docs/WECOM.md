@@ -587,6 +587,14 @@ Command availability differs between private chats and groups:
 | `/new` | Yes | No | Start a fresh conversation |
 | `/sessions` | Yes | No | List recent sessions (up to 10) |
 | `/resume <id>` | Yes | No | Switch to an existing session |
+| `/cancel` | Yes | Yes | Cancel the running task |
+| `/cron help` | Yes | Yes | Show scheduled job commands |
+| `/cron list` | Yes | Yes | List scheduled jobs for the current chat |
+| `/cron status <id\|index\|name>` | Yes | Yes | Show a scheduled job |
+| `/cron stop <id\|index\|name>` | Yes | Yes | Disable a scheduled job |
+| `/cron resume <id\|index\|name>` | Yes | Yes | Re-enable a scheduled job |
+| `/cron remove <id\|index\|name>` | Yes | Yes | Delete a scheduled job |
+| `/cron clear` | Yes | Yes | Delete all scheduled jobs for the current chat |
 | `/status` | Yes | Yes | Show current chat context: channel, scope, session, SOUL.md |
 
 In group chats, `/new`, `/sessions`, and `/resume` return
@@ -606,7 +614,9 @@ Each chat maintains its own Codex session. Sessions are persisted to `~/.local/s
 - Sessions survive gateway restarts.
 - Sessions are shared across channels — a session started in Telegram can be resumed in WeCom and vice versa.
 
-> **Note:** WeCom does not support inline keyboards, so `/sessions` and `/help` show text-only output without buttons. The commands still work — type `/resume <id>` manually.
+> **Note:** In WebSocket mode, WeCom renders command shortcuts with template
+> cards. Webhook mode falls back to text-only output; commands still work by
+> typing them manually.
 
 ## Configuration Reference
 

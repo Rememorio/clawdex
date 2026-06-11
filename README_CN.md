@@ -217,6 +217,7 @@ Telegram、企业微信、微信、QQ Bot 和飞书均支持：
 | `/resume <id>` | 切换到已有会话 |
 | `/cancel` | 取消当前运行中的任务 |
 | `/status` | 显示当前聊天上下文：渠道、作用域、会话、SOUL.md |
+| `/cron help` | 显示定时任务命令 |
 | `/cron list` | 列出当前聊天的定时任务 |
 | `/cron status <id\|序号\|名称>` | 查看定时任务详情 |
 | `/cron stop <id\|序号\|名称>` | 暂停定时任务 |

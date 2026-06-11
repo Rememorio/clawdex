@@ -173,6 +173,13 @@ All standard clawdex commands are available:
 | `/sessions` | List recent sessions |
 | `/resume <id>` | Switch to an existing session |
 | `/cancel` | Cancel the running task |
+| `/cron help` | Show scheduled job commands |
+| `/cron list` | List scheduled jobs for the current chat |
+| `/cron status <id\|index\|name>` | Show a scheduled job |
+| `/cron stop <id\|index\|name>` | Disable a scheduled job |
+| `/cron resume <id\|index\|name>` | Re-enable a scheduled job |
+| `/cron remove <id\|index\|name>` | Delete a scheduled job |
+| `/cron clear` | Delete all scheduled jobs for the current chat |
 | `/status` | Show current chat context |
 
 ## SOUL.md

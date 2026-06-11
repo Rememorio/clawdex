@@ -185,6 +185,14 @@ clawdex config set channels.telegram.require_mention true
 | `/new` | 可用 | 不可用 | 开始新对话 |
 | `/sessions` | 可用 | 不可用 | 列出最近会话（最多 10 个） |
 | `/resume <id>` | 可用 | 不可用 | 切换到已有会话（完整 ID 或短前缀） |
+| `/cancel` | 可用 | 可用 | 取消当前运行中的任务 |
+| `/cron help` | 可用 | 可用 | 显示定时任务命令 |
+| `/cron list` | 可用 | 可用 | 列出当前聊天的定时任务 |
+| `/cron status <id\|序号\|名称>` | 可用 | 可用 | 查看定时任务详情 |
+| `/cron stop <id\|序号\|名称>` | 可用 | 可用 | 暂停定时任务 |
+| `/cron resume <id\|序号\|名称>` | 可用 | 可用 | 恢复定时任务 |
+| `/cron remove <id\|序号\|名称>` | 可用 | 可用 | 删除定时任务 |
+| `/cron clear` | 可用 | 可用 | 删除当前聊天的所有定时任务 |
 | `/status` | 可用 | 可用 | 显示当前聊天上下文：渠道、作用域、会话、SOUL.md |
 
 群聊里执行 `/new`、`/sessions`、`/resume` 时，网关会直接返回

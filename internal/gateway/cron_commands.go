@@ -10,13 +10,34 @@ import (
 	cronjob "github.com/Rememorio/clawdex/internal/cron"
 )
 
-const cronUsage = "Usage:\n" +
-	"  /cron list\n" +
-	"  /cron status <id|index|name>\n" +
-	"  /cron stop <id|index|name>\n" +
-	"  /cron resume <id|index|name>\n" +
-	"  /cron remove <id|index|name>\n" +
-	"  /cron clear"
+var cronCommandDefs = []commandDef{
+	{"/cron help", "Show scheduled job commands"},
+	{"/cron list", "List scheduled jobs for this chat"},
+	{"/cron status <id|index|name>", "Show a scheduled job"},
+	{"/cron stop <id|index|name>", "Disable a scheduled job"},
+	{"/cron resume <id|index|name>", "Re-enable a scheduled job"},
+	{"/cron remove <id|index|name>", "Delete a scheduled job"},
+	{"/cron clear", "Delete all scheduled jobs for this chat"},
+}
+
+func cronUsageText() string {
+	var b strings.Builder
+	b.WriteString("Usage:\n")
+	appendCronCommands(&b)
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func appendCronHelpSection(b *strings.Builder) {
+	b.WriteString("\nScheduled jobs:\n")
+	appendCronCommands(b)
+	b.WriteString("  Natural language with a concrete time can create jobs.\n")
+}
+
+func appendCronCommands(b *strings.Builder) {
+	for _, def := range cronCommandDefs {
+		fmt.Fprintf(b, "  %s — %s\n", def.name, def.help)
+	}
+}
 
 func (s *Service) handleCronCommand(ctx context.Context, msg channel.Message) (commandResponse, bool) {
 	cmd, args, ok := parseCommandText(msg.Text)
@@ -34,7 +55,7 @@ func (s *Service) handleCronCommand(ctx context.Context, msg channel.Message) (c
 	target := deliveryTargetFromMessage(msg)
 	switch action {
 	case "help":
-		return commandResponse{text: cronUsage}, true
+		return commandResponse{text: cronUsageText()}, true
 	case "list":
 		jobs, err := s.currentCronJobs(ctx, target)
 		if err != nil {
@@ -59,7 +80,7 @@ func (s *Service) handleCronCommand(ctx context.Context, msg channel.Message) (c
 		return commandResponse{text: fmt.Sprintf("Removed %d scheduled job(s).", removed)}, true
 	case "status", "stop", "resume", "remove":
 		if len(fields) != 2 {
-			return commandResponse{text: cronUsage}, true
+			return commandResponse{text: cronUsageText()}, true
 		}
 		jobs, err := s.currentCronJobs(ctx, target)
 		if err != nil {
@@ -67,7 +88,7 @@ func (s *Service) handleCronCommand(ctx context.Context, msg channel.Message) (c
 		}
 		job, err := selectCronJob(jobs, fields[1])
 		if err != nil {
-			return commandResponse{text: err.Error() + "\n\n" + cronUsage}, true
+			return commandResponse{text: err.Error() + "\n\n" + cronUsageText()}, true
 		}
 		switch action {
 		case "status":
@@ -97,7 +118,7 @@ func (s *Service) handleCronCommand(ctx context.Context, msg channel.Message) (c
 			return commandResponse{text: "Removed scheduled job: " + cronDisplayName(job)}, true
 		}
 	}
-	return commandResponse{text: cronUsage}, true
+	return commandResponse{text: cronUsageText()}, true
 }
 
 func (s *Service) currentCronJobs(ctx context.Context, target channel.DeliveryTarget) ([]cronjob.Job, error) {
