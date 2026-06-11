@@ -70,8 +70,11 @@ calendar-based schedule.
 | `message` | Sends the stored text at run time. Use this for fixed reminders. |
 | `agent` | Runs Codex again at run time using the stored instruction, then sends the fresh result. |
 
-Agent jobs reuse the originating chat's session scope where possible, so
-scheduled reasoning stays tied to the chat that created it.
+Agent jobs use a stable session scope per scheduled job. Repeated runs of the
+same job can keep continuity, but they are isolated from the live chat session
+that created the job so manual runs cannot collide with an in-flight chat turn.
+If an agent run fails before producing a report, clawdex records the job as
+failed and sends a failure notice to the job's delivery target when possible.
 
 ## Configuration
 

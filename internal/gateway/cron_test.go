@@ -143,3 +143,35 @@ func TestDeliverCronUsesRegisteredSender(t *testing.T) {
 	assert.Equal(t, target, sender.target)
 	assert.Equal(t, "hello", sender.text)
 }
+
+func TestCronAgentScopeIDIsStableAndIsolated(t *testing.T) {
+	job := cronjob.Job{
+		ID:       "cron_1111111111111111",
+		ScopeID:  42,
+		Delivery: channel.DeliveryTarget{ChatID: 42},
+	}
+
+	first := cronAgentScopeID(job)
+	second := cronAgentScopeID(job)
+
+	assert.Equal(t, first, second)
+	assert.NotZero(t, first)
+	assert.NotEqual(t, job.ScopeID, first)
+	assert.NotEqual(t, job.Delivery.ChatID, first)
+}
+
+func TestCronAgentScopeIDFallsBackForUnsavedJob(t *testing.T) {
+	job := cronjob.Job{
+		ScopeID:  42,
+		Delivery: channel.DeliveryTarget{ChatID: 99},
+	}
+
+	assert.Equal(t, int64(42), cronAgentScopeID(job))
+}
+
+func TestCronAgentOutputError(t *testing.T) {
+	assert.NoError(t, cronAgentOutputError("normal report"))
+	assert.ErrorContains(t, cronAgentOutputError("codex failed: exit status 1"), "exit status 1")
+	assert.ErrorContains(t, cronAgentOutputError("codex command timeout"), "timeout")
+	assert.ErrorContains(t, cronAgentOutputError("failed to create temporary directory: denied"), "temporary directory")
+}

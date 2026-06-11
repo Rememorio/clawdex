@@ -108,6 +108,49 @@ func TestServiceRunNowAgentPayload(t *testing.T) {
 	assert.Equal(t, []string{"agent result: check the build"}, delivered)
 }
 
+func TestServiceRunNowAgentErrorDeliversFailureNotice(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	var delivered []string
+
+	svc := New(Options{
+		Enabled:   true,
+		StorePath: filepath.Join(t.TempDir(), "jobs.json"),
+		Now:       func() time.Time { return now },
+		RunAgent: func(ctx context.Context, job Job) (string, error) {
+			return "", errors.New("codex failed: exit status 1")
+		},
+		Deliver: func(ctx context.Context, target channel.DeliveryTarget, text string) error {
+			delivered = append(delivered, text)
+			return nil
+		},
+	})
+
+	job, err := svc.Add(ctx, CreateJob{
+		Name:     "agent",
+		Schedule: Schedule{Kind: ScheduleEvery, EverySeconds: 60},
+		Payload:  Payload{Kind: PayloadAgent, Text: "check the build"},
+		Delivery: channel.DeliveryTarget{Channel: "test", ChatID: 42},
+		ScopeID:  99,
+	})
+	require.NoError(t, err)
+
+	result, err := svc.RunNow(ctx, job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusError, result.Status)
+	assert.True(t, result.Delivered)
+	assert.Contains(t, result.Error, "exit status 1")
+	require.Len(t, delivered, 1)
+	assert.Contains(t, delivered[0], "Scheduled job failed: agent")
+	assert.Contains(t, delivered[0], "codex failed: exit status 1")
+
+	got, ok, err := svc.Get(ctx, job.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, StatusError, got.State.LastStatus)
+	assert.True(t, got.State.Delivered)
+}
+
 func TestServiceOneShotDisablesAfterRun(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)

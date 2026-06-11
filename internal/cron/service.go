@@ -444,7 +444,15 @@ func (s *Service) execute(ctx context.Context, job Job) RunResult {
 		err = fmt.Errorf("unknown payload kind %q", job.Payload.Kind)
 	}
 	if err != nil {
-		return RunResult{JobID: job.ID, Status: StatusError, Error: err.Error()}
+		result := RunResult{JobID: job.ID, Status: StatusError, Error: err.Error()}
+		if s.deliver != nil {
+			if deliverErr := s.deliver(ctx, job.Delivery, formatFailureNotice(job, err)); deliverErr == nil {
+				result.Delivered = true
+			} else {
+				result.Error = err.Error() + "; failure notice delivery failed: " + deliverErr.Error()
+			}
+		}
+		return result
 	}
 	delivered := false
 	if strings.TrimSpace(text) != "" {
@@ -457,6 +465,17 @@ func (s *Service) execute(ctx context.Context, job Job) RunResult {
 		delivered = true
 	}
 	return RunResult{JobID: job.ID, Status: StatusOK, Delivered: delivered}
+}
+
+func formatFailureNotice(job Job, err error) string {
+	name := strings.TrimSpace(job.Name)
+	if name == "" {
+		name = strings.TrimSpace(job.ID)
+	}
+	if name == "" {
+		name = "scheduled job"
+	}
+	return "Scheduled job failed: " + name + "\nError: " + err.Error()
 }
 
 func (s *Service) finishRun(id string, started time.Time, result RunResult) {

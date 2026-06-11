@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"strings"
@@ -252,10 +254,7 @@ func (s *Service) RunCronAgent(ctx context.Context, job cronjob.Job) (string, er
 	if s.codexClient == nil {
 		return "", fmt.Errorf("codex client is not configured")
 	}
-	scopeID := job.ScopeID
-	if scopeID == 0 {
-		scopeID = job.Delivery.ChatID
-	}
+	scopeID := cronAgentScopeID(job)
 	msg := channel.Message{
 		Channel:  job.Delivery.Channel,
 		ChatID:   job.Delivery.ChatID,
@@ -270,7 +269,46 @@ func (s *Service) RunCronAgent(ctx context.Context, job cronjob.Job) (string, er
 		Sandbox: s.resolveSandbox(msg),
 		Channel: job.Delivery.Channel,
 	})
-	return stripThinkingTags(out), nil
+	out = stripThinkingTags(out)
+	if err := cronAgentOutputError(out); err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+func cronAgentScopeID(job cronjob.Job) int64 {
+	key := strings.TrimSpace(job.ID)
+	if key == "" {
+		if job.ScopeID != 0 {
+			return job.ScopeID
+		}
+		if job.Delivery.ChatID != 0 {
+			return job.Delivery.ChatID
+		}
+		return scopeFallbackID
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte("cron" + scopeSeparator + key))
+	scopeID := int64(h.Sum64())
+	if scopeID == 0 {
+		return scopeFallbackID
+	}
+	return scopeID
+}
+
+func cronAgentOutputError(text string) error {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	switch {
+	case strings.HasPrefix(text, "codex failed:"),
+		text == "codex command timeout",
+		strings.HasPrefix(text, "failed to create temporary directory:"):
+		return errors.New(text)
+	default:
+		return nil
+	}
 }
 
 func cronRequestID(req cronToolRequest) string {

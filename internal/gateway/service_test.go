@@ -15,6 +15,7 @@ import (
 
 	"github.com/Rememorio/clawdex/internal/channel"
 	"github.com/Rememorio/clawdex/internal/codex"
+	cronjob "github.com/Rememorio/clawdex/internal/cron"
 )
 
 // --- mock driver ---
@@ -1569,6 +1570,48 @@ func TestCancel_NoRunningJob(t *testing.T) {
 	require.Len(t, resp.replies, 1)
 	assert.Equal(t, "No running task to cancel.", resp.replies[0].Text)
 	// No typing indicator for /cancel.
+	assert.Empty(t, resp.typings)
+}
+
+func TestCronCommandDoesNotWaitForChatLock(t *testing.T) {
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	svc := New(nil, 1, "off")
+	svc.SetCron(cronjob.New(cronjob.Options{
+		Enabled:   true,
+		StorePath: filepath.Join(t.TempDir(), "jobs.json"),
+		Now:       func() time.Time { return now },
+	}))
+	target := channel.DeliveryTarget{Channel: "test", ChatID: 1, Target: "1"}
+	_, err := svc.cron.Add(context.Background(), cronjob.CreateJob{
+		Name:     "daily",
+		Schedule: cronjob.Schedule{Kind: cronjob.ScheduleEvery, EverySeconds: 60},
+		Payload:  cronjob.Payload{Kind: cronjob.PayloadMessage, Text: "hello"},
+		Delivery: target,
+		ScopeID:  1,
+	})
+	require.NoError(t, err)
+
+	msg := channel.Message{Channel: "test", ChatID: 1, Target: "1", Text: "/cron list"}
+	unlock := svc.lockChat(msg)
+	defer unlock()
+
+	resp := &mockResponder{}
+	done := make(chan struct{})
+	go func() {
+		svc.processJob(context.Background(), job{msg: msg, responder: resp})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("/cron command waited for chat lock")
+	}
+
+	resp.mu.Lock()
+	defer resp.mu.Unlock()
+	require.Len(t, resp.replies, 1)
+	assert.Contains(t, resp.replies[0].Text, "daily")
 	assert.Empty(t, resp.typings)
 }
 

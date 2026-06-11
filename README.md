@@ -247,7 +247,9 @@ that same chat. Jobs persist under `~/.clawdex/cron/jobs.json` by default.
 The scheduler supports one-shot RFC3339 times, fixed intervals, and five-field
 cron expressions with optional IANA time zones. Fixed reminders send stored
 text; agent jobs run Codex again at schedule time and send the fresh result
-back to the originating chat.
+back to the originating chat. Agent jobs use a stable per-job Codex session, so
+scheduled runs keep their own continuity without colliding with the live chat
+session that created them.
 
 Runtime settings:
 

@@ -267,8 +267,6 @@ func (s *Service) processJob(ctx context.Context, j job) {
 		return
 	}
 
-	unlock := s.lockChat(j.msg)
-	defer unlock()
 	defer cleanupMediaDirs(j.msg.MediaPaths, j.msg.CleanupPaths)
 
 	if resp, ok := s.handleCronCommand(ctx, j.msg); ok {
@@ -280,6 +278,9 @@ func (s *Service) processJob(ctx context.Context, j job) {
 		s.replyCommand(ctx, j, resp)
 		return
 	}
+
+	unlock := s.lockChat(j.msg)
+	defer unlock()
 
 	// Create a cancellable context for this job.
 	jobCtx, cancelJob := context.WithCancel(ctx)
