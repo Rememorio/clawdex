@@ -3,6 +3,7 @@ package gateway
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,8 +38,10 @@ func TestHandleCommand_Help(t *testing.T) {
 	assert.Contains(t, resp.text, "/status")
 	assert.Contains(t, resp.text, "/sessions")
 	assert.Contains(t, resp.text, "/resume")
+	assert.Contains(t, resp.text, "/cron — Manage scheduled jobs")
 	assert.Contains(t, resp.text, "/cron list")
 	assert.Contains(t, resp.text, "/cron status <id|index|name>")
+	assert.Less(t, strings.Index(resp.text, "/cron —"), strings.Index(resp.text, "/cancel —"))
 }
 
 func TestHandleCommand_Help_AlwaysHasKeyboard(t *testing.T) {
@@ -81,7 +84,8 @@ func TestHandleCommand_Help_HasSessionCard(t *testing.T) {
 	assert.True(t, ok)
 	require.NotNil(t, resp.sessionCard)
 	assert.Equal(t, "Help", resp.sessionCard.Title)
-	assert.Contains(t, resp.sessionCard.Desc, "/cron")
+	assert.Equal(t, "Available commands", resp.sessionCard.Desc)
+	assert.Contains(t, resp.sessionCard.Body, "/cron — Manage scheduled jobs")
 	assert.Contains(t, resp.sessionCard.Body, "/cron list")
 	require.Len(t, resp.sessionCard.Buttons, 2)
 	assert.Equal(t, "/sessions", resp.sessionCard.Buttons[0].Text)

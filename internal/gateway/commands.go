@@ -22,8 +22,8 @@ var commandDefs = []commandDef{
 	{"/new", "Start a fresh conversation"},
 	{"/sessions", "List recent codex sessions"},
 	{"/resume <id>", "Switch to an existing session"},
-	{"/cancel", "Cancel the running task"},
 	{"/cron", "Manage scheduled jobs for this chat"},
+	{"/cancel", "Cancel the running task"},
 	{"/status", "Show current chat context"},
 }
 
@@ -163,7 +163,7 @@ func cmdHelp(_ *codex.Client, msg channel.Message, _ string) commandResponse {
 	if !isGroup {
 		helpCard := channel.SessionCard{
 			Title: "Help",
-			Desc:  "Available commands, including /cron jobs",
+			Desc:  "Available commands",
 			Body:  b.String(),
 			Buttons: []channel.SessionCardButton{
 				{Text: "/sessions", CallbackData: "/sessions:sessions"},
