@@ -249,7 +249,8 @@ cron expressions with optional IANA time zones. Fixed reminders send stored
 text; agent jobs run Codex again at schedule time and send the fresh result
 back to the originating chat. Agent jobs use a stable per-job Codex session, so
 scheduled runs keep their own continuity without colliding with the live chat
-session that created them.
+session that created them. During an agent job, Codex can call the `notify`
+tool to split proactive delivery into multiple messages.
 
 Runtime settings:
 

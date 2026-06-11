@@ -76,6 +76,11 @@ that created the job so manual runs cannot collide with an in-flight chat turn.
 If an agent run fails before producing a report, clawdex records the job as
 failed and sends a failure notice to the job's delivery target when possible.
 
+During an agent job, Codex can use the `notify` MCP tool to proactively send
+one or more messages to the originating chat. This is useful for long reports
+that should be split into multiple pushes. When `notify` is used, clawdex marks
+the run as delivered and does not send an extra final message.
+
 ## Configuration
 
 Cron is enabled by default.

@@ -151,6 +151,44 @@ func TestServiceRunNowAgentErrorDeliversFailureNotice(t *testing.T) {
 	assert.True(t, got.State.Delivered)
 }
 
+func TestServiceRunNowAgentAlreadyDelivered(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+
+	svc := New(Options{
+		Enabled:   true,
+		StorePath: filepath.Join(t.TempDir(), "jobs.json"),
+		Now:       func() time.Time { return now },
+		RunAgent: func(ctx context.Context, job Job) (string, error) {
+			return "", ErrAlreadyDelivered
+		},
+		Deliver: func(ctx context.Context, target channel.DeliveryTarget, text string) error {
+			t.Fatalf("unexpected final delivery: %s", text)
+			return nil
+		},
+	})
+
+	job, err := svc.Add(ctx, CreateJob{
+		Name:     "agent",
+		Schedule: Schedule{Kind: ScheduleEvery, EverySeconds: 60},
+		Payload:  Payload{Kind: PayloadAgent, Text: "check the build"},
+		Delivery: channel.DeliveryTarget{Channel: "test", ChatID: 42},
+		ScopeID:  99,
+	})
+	require.NoError(t, err)
+
+	result, err := svc.RunNow(ctx, job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusOK, result.Status)
+	assert.True(t, result.Delivered)
+
+	got, ok, err := svc.Get(ctx, job.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, StatusOK, got.State.LastStatus)
+	assert.True(t, got.State.Delivered)
+}
+
 func TestServiceOneShotDisablesAfterRun(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)

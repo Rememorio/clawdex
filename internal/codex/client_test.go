@@ -176,6 +176,73 @@ echo "$@" > ` + argsFile + `
 	assert.Contains(t, string(argsData), "--sandbox workspace-write")
 }
 
+func TestRun_CronMCPArgsCanBeDisabled(t *testing.T) {
+	binDir := t.TempDir()
+	script := filepath.Join(binDir, "codex")
+	argsFile := filepath.Join(t.TempDir(), "args.txt")
+	scriptContent := `#!/bin/sh
+echo "$@" > ` + argsFile + `
+`
+	require.NoError(t, os.WriteFile(script, []byte(scriptContent), 0o755))
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	c := &Client{
+		WorkDir:        t.TempDir(),
+		Timeout:        10 * time.Second,
+		CronMCPEnabled: true,
+		CronMCPCommand: "clawdex",
+		Store:          NewSessionStore(filepath.Join(t.TempDir(), "sessions.json")),
+	}
+
+	c.RunWithOptions(context.Background(), 1, "test prompt", nil, RunOptions{
+		DisableCronMCP: true,
+	})
+
+	argsData, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	assert.NotContains(t, string(argsData), "mcp_servers.clawdex_cron")
+}
+
+func TestRun_CronMCPArgsIncludeContextTokenEnv(t *testing.T) {
+	binDir := t.TempDir()
+	script := filepath.Join(binDir, "codex")
+	argsFile := filepath.Join(t.TempDir(), "args.txt")
+	envFile := filepath.Join(t.TempDir(), "env.txt")
+	toolsFile := filepath.Join(t.TempDir(), "tools.txt")
+	scriptContent := `#!/bin/sh
+echo "$@" > ` + argsFile + `
+echo "$CLAWDEX_CRON_CONTEXT_TOKEN" > ` + envFile + `
+echo "$CLAWDEX_MCP_TOOLS" > ` + toolsFile + `
+`
+	require.NoError(t, os.WriteFile(script, []byte(scriptContent), 0o755))
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	c := &Client{
+		WorkDir:        t.TempDir(),
+		Timeout:        10 * time.Second,
+		CronMCPEnabled: true,
+		CronMCPCommand: "clawdex",
+		Store:          NewSessionStore(filepath.Join(t.TempDir(), "sessions.json")),
+	}
+
+	c.RunWithOptions(context.Background(), 1, "test prompt", nil, RunOptions{
+		CronContextToken: "token-123",
+		MCPTools:         []string{"notify"},
+	})
+
+	argsData, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(argsData), "mcp_servers.clawdex_cron.command=\"clawdex\"")
+
+	envData, err := os.ReadFile(envFile)
+	require.NoError(t, err)
+	assert.Equal(t, "token-123", strings.TrimSpace(string(envData)))
+
+	toolsData, err := os.ReadFile(toolsFile)
+	require.NoError(t, err)
+	assert.Equal(t, "notify", strings.TrimSpace(string(toolsData)))
+}
+
 func TestRun_SoulContentInjected(t *testing.T) {
 	binDir := t.TempDir()
 	script := filepath.Join(binDir, "codex")

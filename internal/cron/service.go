@@ -2,6 +2,7 @@ package cron
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -442,6 +443,9 @@ func (s *Service) execute(ctx context.Context, job Job) RunResult {
 		}
 	default:
 		err = fmt.Errorf("unknown payload kind %q", job.Payload.Kind)
+	}
+	if errors.Is(err, ErrAlreadyDelivered) {
+		return RunResult{JobID: job.ID, Status: StatusOK, Delivered: true}
 	}
 	if err != nil {
 		result := RunResult{JobID: job.ID, Status: StatusError, Error: err.Error()}

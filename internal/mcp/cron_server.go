@@ -19,6 +19,7 @@ import (
 const (
 	defaultGatewayURL = "http://127.0.0.1:8080"
 	cronToolName      = "cron"
+	notifyToolName    = "notify"
 )
 
 type Server struct {
@@ -26,6 +27,7 @@ type Server struct {
 	out        io.Writer
 	gatewayURL string
 	token      string
+	tools      map[string]bool
 	httpClient *http.Client
 }
 
@@ -39,6 +41,7 @@ func NewCronServer(in io.Reader, out io.Writer) *Server {
 		out:        out,
 		gatewayURL: gatewayURL,
 		token:      strings.TrimSpace(os.Getenv("CLAWDEX_CRON_CONTEXT_TOKEN")),
+		tools:      parseMCPTools(os.Getenv("CLAWDEX_MCP_TOOLS")),
 		httpClient: http.DefaultClient,
 	}
 }
@@ -108,7 +111,7 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) (any, error) {
 	case "ping":
 		return map[string]any{}, nil
 	case "tools/list":
-		return map[string]any{"tools": []any{cronToolDefinition()}}, nil
+		return map[string]any{"tools": s.toolDefinitions()}, nil
 	case "tools/call":
 		return s.handleToolCall(ctx, req.Params)
 	case "resources/list":
@@ -128,7 +131,7 @@ func (s *Server) handleToolCall(ctx context.Context, raw json.RawMessage) (any, 
 	if err := json.Unmarshal(raw, &call); err != nil {
 		return nil, err
 	}
-	if call.Name != cronToolName {
+	if !s.tools[call.Name] {
 		return toolError("unknown tool: " + call.Name), nil
 	}
 	var args map[string]any
@@ -141,12 +144,46 @@ func (s *Server) handleToolCall(ctx context.Context, raw json.RawMessage) (any, 
 		return toolError("missing CLAWDEX_CRON_CONTEXT_TOKEN"), nil
 	}
 	args["token"] = s.token
+	if call.Name == notifyToolName {
+		args["action"] = "notify"
+	}
 	result, err := s.callGateway(ctx, args)
 	if err != nil {
 		return toolError(err.Error()), nil
 	}
 	data, _ := json.MarshalIndent(result, "", "  ")
 	return toolText(string(data)), nil
+}
+
+func parseMCPTools(raw string) map[string]bool {
+	tools := map[string]bool{}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		tools[cronToolName] = true
+		return tools
+	}
+	for _, part := range strings.Split(raw, ",") {
+		name := strings.ToLower(strings.TrimSpace(part))
+		switch name {
+		case "all":
+			tools[cronToolName] = true
+			tools[notifyToolName] = true
+		case cronToolName, notifyToolName:
+			tools[name] = true
+		}
+	}
+	return tools
+}
+
+func (s *Server) toolDefinitions() []any {
+	var tools []any
+	if s.tools[cronToolName] {
+		tools = append(tools, cronToolDefinition())
+	}
+	if s.tools[notifyToolName] {
+		tools = append(tools, notifyToolDefinition())
+	}
+	return tools
 }
 
 func (s *Server) callGateway(ctx context.Context, args map[string]any) (any, error) {
@@ -224,6 +261,26 @@ func cronToolDefinition() map[string]any {
 				"patch":            cronPatchSchema(),
 			},
 			"required": []string{"action"},
+		},
+	}
+}
+
+func notifyToolDefinition() map[string]any {
+	return map[string]any{
+		"name": notifyToolName,
+		"description": strings.Join([]string{
+			"Send a proactive message to the chat that owns the current clawdex scheduled job.",
+			"Use this from scheduled agent jobs when the user asked for multiple pushed batches or an explicit failure notice.",
+			"Call it once for each batch; clawdex automatically targets the originating chat.",
+		}, " "),
+		"inputSchema": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"title":   map[string]any{"type": "string"},
+				"text":    map[string]any{"type": "string"},
+				"content": map[string]any{"type": "string"},
+			},
 		},
 	}
 }

@@ -149,6 +149,8 @@ type RunOptions struct {
 	Sandbox          string
 	Channel          string
 	CronContextToken string
+	DisableCronMCP   bool
+	MCPTools         []string
 }
 
 // executableName returns the codex binary name to use.
@@ -159,8 +161,8 @@ func (c *Client) executableName() string {
 	return codexExecutableName
 }
 
-func (c *Client) appendCronMCPArgs(args []string) []string {
-	if !c.CronMCPEnabled {
+func (c *Client) appendCronMCPArgs(args []string, opts RunOptions) []string {
+	if !c.CronMCPEnabled || opts.DisableCronMCP {
 		return args
 	}
 	command := strings.TrimSpace(c.CronMCPCommand)
@@ -189,6 +191,9 @@ func (c *Client) extraEnv(opts RunOptions) []string {
 	}
 	if opts.CronContextToken != "" {
 		env = append(env, "CLAWDEX_CRON_CONTEXT_TOKEN="+opts.CronContextToken)
+	}
+	if len(opts.MCPTools) > 0 {
+		env = append(env, "CLAWDEX_MCP_TOOLS="+strings.Join(opts.MCPTools, ","))
 	}
 	return env
 }
@@ -429,7 +434,7 @@ func (c *Client) execFreshStream(ctx context.Context, chatID int64, lastMsgPath,
 	if opts.Sandbox != "" {
 		args = append(args, "--sandbox", opts.Sandbox)
 	}
-	args = c.appendCronMCPArgs(args)
+	args = c.appendCronMCPArgs(args, opts)
 
 	var soulFile string
 	if soul := c.resolveSoul(opts.Channel); soul != "" {
@@ -463,7 +468,7 @@ func (c *Client) execFreshStream(ctx context.Context, chatID int64, lastMsgPath,
 func (c *Client) execResumeStream(ctx context.Context, sessionID, lastMsgPath, prompt string, imagePaths []string, onChunk StreamCallback, opts RunOptions) string {
 	args := []string{"exec", "resume", "--json", "--skip-git-repo-check", "-o", lastMsgPath}
 	args = append(args, resumeSandboxArgs(opts.Sandbox)...)
-	args = c.appendCronMCPArgs(args)
+	args = c.appendCronMCPArgs(args, opts)
 	args = append(args, sessionID, prompt)
 	for _, p := range imagePaths {
 		args = append(args, "--image", p)
@@ -609,7 +614,7 @@ func (c *Client) execFresh(ctx context.Context, chatID int64, lastMsgPath, promp
 	if opts.Sandbox != "" {
 		args = append(args, "--sandbox", opts.Sandbox)
 	}
-	args = c.appendCronMCPArgs(args)
+	args = c.appendCronMCPArgs(args, opts)
 
 	// Write SOUL.md content to a temp file and pass via model_instructions_file.
 	// Using -c instructions=<content> breaks when the content has newlines or
@@ -650,7 +655,7 @@ func (c *Client) execFresh(ctx context.Context, chatID int64, lastMsgPath, promp
 func (c *Client) execResume(ctx context.Context, sessionID, lastMsgPath, prompt string, imagePaths []string, opts RunOptions) string {
 	args := []string{"exec", "resume", "--json", "--skip-git-repo-check", "-o", lastMsgPath}
 	args = append(args, resumeSandboxArgs(opts.Sandbox)...)
-	args = c.appendCronMCPArgs(args)
+	args = c.appendCronMCPArgs(args, opts)
 	// Positional args (sessionID, prompt) must come before --image.
 	args = append(args, sessionID, prompt)
 	for _, p := range imagePaths {

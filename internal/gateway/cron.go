@@ -31,6 +31,8 @@ type cronToolRequest struct {
 	JobID           string           `json:"job_id,omitempty"`
 	Patch           cronToolPatch    `json:"patch,omitempty"`
 	Text            string           `json:"text,omitempty"`
+	Title           string           `json:"title,omitempty"`
+	Content         string           `json:"content,omitempty"`
 	Schedule        cronjob.Schedule `json:"schedule,omitempty"`
 	Payload         cronjob.Payload  `json:"payload,omitempty"`
 	Name            string           `json:"name,omitempty"`
@@ -216,6 +218,16 @@ func (s *Service) dispatchCronTool(ctx context.Context, cronCtx cronContext, req
 			return nil, err
 		}
 		return result, nil
+	case "notify":
+		text := formatCronNotifyText(req)
+		if strings.TrimSpace(text) == "" {
+			return nil, fmt.Errorf("notify text is required")
+		}
+		if err := s.DeliverCron(ctx, cronCtx.Delivery, text); err != nil {
+			return nil, err
+		}
+		s.markCronNotified(req.Token)
+		return map[string]any{"delivered": true}, nil
 	default:
 		return nil, fmt.Errorf("unsupported cron action %q", req.Action)
 	}
@@ -263,17 +275,53 @@ func (s *Service) RunCronAgent(ctx context.Context, job cronjob.Job) (string, er
 		Target:   job.Delivery.Target,
 		Text:     job.Payload.Text,
 	}
+	cronToken := s.newCronContext(msg)
+	s.logCronContext(msg, cronToken)
 	prompt := "[scheduled task]\nCurrent time: " +
 		time.Now().Format(time.RFC3339) + "\n\n" + job.Payload.Text
 	out := s.codexClient.RunWithOptions(ctx, scopeID, prompt, nil, codex.RunOptions{
-		Sandbox: s.resolveSandbox(msg),
-		Channel: job.Delivery.Channel,
+		Sandbox:          s.resolveSandbox(msg),
+		Channel:          job.Delivery.Channel,
+		CronContextToken: cronToken,
+		MCPTools:         []string{"notify"},
 	})
 	out = stripThinkingTags(out)
 	if err := cronAgentOutputError(out); err != nil {
 		return "", err
 	}
+	if s.consumeCronNotified(cronToken) {
+		return "", cronjob.ErrAlreadyDelivered
+	}
 	return out, nil
+}
+
+func formatCronNotifyText(req cronToolRequest) string {
+	text := strings.TrimSpace(firstNonEmpty(req.Text, req.Content))
+	title := strings.TrimSpace(req.Title)
+	switch {
+	case title == "":
+		return text
+	case text == "":
+		return title
+	default:
+		return title + "\n\n" + text
+	}
+}
+
+func (s *Service) markCronNotified(token string) {
+	token = strings.TrimSpace(token)
+	if token != "" {
+		s.cronNotified.Store(token, true)
+	}
+}
+
+func (s *Service) consumeCronNotified(token string) bool {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
+	_, ok := s.cronNotified.LoadAndDelete(token)
+	return ok
 }
 
 func cronAgentScopeID(job cronjob.Job) int64 {

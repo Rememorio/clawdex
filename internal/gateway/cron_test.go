@@ -144,6 +144,30 @@ func TestDeliverCronUsesRegisteredSender(t *testing.T) {
 	assert.Equal(t, "hello", sender.text)
 }
 
+func TestCronToolNotifyDeliversToContextTarget(t *testing.T) {
+	svc := newCronTestService(t)
+	sender := &testProactiveSender{name: "telegram"}
+	svc.RegisterSender(sender)
+	token := svc.newCronContext(channel.Message{
+		Channel: "telegram",
+		ChatID:  42,
+		Target:  "42",
+	})
+
+	out := callCronTool(t, svc, map[string]any{
+		"token":   token,
+		"action":  "notify",
+		"title":   "Report",
+		"content": "hello",
+	})
+
+	require.True(t, out.OK, out.Error)
+	assert.Equal(t, channel.DeliveryTarget{Channel: "telegram", ChatID: 42, Target: "42"}, sender.target)
+	assert.Equal(t, "Report\n\nhello", sender.text)
+	assert.True(t, svc.consumeCronNotified(token))
+	assert.False(t, svc.consumeCronNotified(token))
+}
+
 func TestCronAgentScopeIDIsStableAndIsolated(t *testing.T) {
 	job := cronjob.Job{
 		ID:       "cron_1111111111111111",

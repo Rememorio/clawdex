@@ -2,6 +2,7 @@
 package cron
 
 import (
+	"errors"
 	"time"
 
 	"github.com/Rememorio/clawdex/internal/channel"
@@ -19,6 +20,11 @@ const (
 	StatusError   = "error"
 	StatusRunning = "running"
 )
+
+// ErrAlreadyDelivered lets an agent runner report that it delivered its own
+// output through a tool, so the scheduler should mark the run successful
+// without sending another final message.
+var ErrAlreadyDelivered = errors.New("cron agent already delivered")
 
 // Schedule describes when a job should run.
 type Schedule struct {

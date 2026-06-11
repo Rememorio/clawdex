@@ -69,6 +69,7 @@ type Service struct {
 	cron          *cronjob.Service
 	senders       sync.Map // channel name → channel.ProactiveSender
 	cronContexts  sync.Map // token → cronContext
+	cronNotified  sync.Map // token → bool
 }
 
 // New creates a gateway service with the requested worker count.
