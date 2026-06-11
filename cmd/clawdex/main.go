@@ -16,6 +16,7 @@ import (
 	"github.com/Rememorio/clawdex/internal/config"
 	"github.com/Rememorio/clawdex/internal/daemon"
 	"github.com/Rememorio/clawdex/internal/doctor"
+	"github.com/Rememorio/clawdex/internal/mcp"
 	"github.com/Rememorio/clawdex/internal/onboard"
 	"github.com/Rememorio/clawdex/internal/termcolor"
 	"github.com/Rememorio/clawdex/internal/updater"
@@ -67,6 +68,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  clawdex config get <KEY>    Get a config value")
 	fmt.Fprintln(os.Stderr, "  clawdex config set <KEY> <VALUE>  Set a config value")
 	fmt.Fprintln(os.Stderr, "  clawdex config file         Show config file path")
+	fmt.Fprintln(os.Stderr, "  clawdex mcp-server cron     Run the cron MCP server")
 }
 
 func main() {
@@ -93,6 +95,8 @@ func main() {
 		err = runDoctorCommand()
 	case "config":
 		err = runConfigCommand()
+	case "mcp-server":
+		err = runMCPServerCommand()
 	default:
 		fmt.Fprintf(os.Stderr, "%s unknown command: %s\n\n", red("✗"), os.Args[1])
 		printUsage()
@@ -103,6 +107,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%s %v\n", red("✗"), err)
 		os.Exit(1)
 	}
+}
+
+func runMCPServerCommand() error {
+	if len(os.Args) != 3 || os.Args[2] != "cron" {
+		return fmt.Errorf("usage: clawdex mcp-server cron")
+	}
+	return mcp.NewCronServer(os.Stdin, os.Stdout).Serve(context.Background())
 }
 
 func runUpdateCommand() error {

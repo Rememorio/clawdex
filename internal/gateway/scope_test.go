@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -52,13 +53,18 @@ func TestSessionScopeID_GroupDiffersAcrossThreads(t *testing.T) {
 func TestCodexPrompt_PrivateChatPlainTextWhenNoSender(t *testing.T) {
 	msg := channel.Message{ChatID: 42, Text: "hello"}
 
-	assert.Equal(t, "hello", codexPrompt(msg))
+	prompt := codexPrompt(msg)
+	assert.Contains(t, prompt, "[Current turn time: ")
+	assert.Contains(t, prompt, "[Cron authoring: ")
+	assert.True(t, strings.HasSuffix(prompt, "\nhello"))
 }
 
 func TestCodexPrompt_PrivateChatIncludesSenderName(t *testing.T) {
 	msg := channel.Message{ChatID: 42, SenderName: "张三", Text: "hello"}
 
-	assert.Equal(t, "[sender: 张三]\nhello", codexPrompt(msg))
+	prompt := codexPrompt(msg)
+	assert.Contains(t, prompt, "[Current turn time: ")
+	assert.Contains(t, prompt, "[sender: 张三]\nhello")
 }
 
 func TestCodexPrompt_GroupIncludesSpeakerMetadata(t *testing.T) {

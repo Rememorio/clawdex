@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -20,6 +22,7 @@ import (
 	"github.com/Rememorio/clawdex/internal/channel/weixin"
 	"github.com/Rememorio/clawdex/internal/codex"
 	"github.com/Rememorio/clawdex/internal/config"
+	cronjob "github.com/Rememorio/clawdex/internal/cron"
 	"github.com/Rememorio/clawdex/internal/daemon"
 	"github.com/Rememorio/clawdex/internal/gateway"
 	"github.com/Rememorio/clawdex/internal/logger"
@@ -142,14 +145,16 @@ func RunGateway() error {
 	}
 
 	codexClient := &codex.Client{
-		WorkDir:      cfg.Codex.WorkDir,
-		Timeout:      cfg.Codex.CommandTimeout,
-		Sandbox:      cfg.Codex.Sandbox,
-		GroupSandbox: cfg.Codex.GroupSandbox,
-		SoulContent:  cfg.Codex.SoulContent,
-		SoulPath:     cfg.Codex.SoulPath,
-		Store:        codex.NewSessionStore(filepath.Join(dataDir, "sessions.json")),
-		Trace:        codexTraceLogger,
+		WorkDir:        cfg.Codex.WorkDir,
+		Timeout:        cfg.Codex.CommandTimeout,
+		Sandbox:        cfg.Codex.Sandbox,
+		GroupSandbox:   cfg.Codex.GroupSandbox,
+		SoulContent:    cfg.Codex.SoulContent,
+		SoulPath:       cfg.Codex.SoulPath,
+		Store:          codex.NewSessionStore(filepath.Join(dataDir, "sessions.json")),
+		Trace:          codexTraceLogger,
+		CronMCPEnabled: cfg.Cron.Enabled && cfg.Cron.MCPEnabled,
+		GatewayURL:     gatewayLoopbackURL(cfg.Server.Address),
 	}
 
 	// Populate per-instance SOUL overrides from Telegram configs.
@@ -197,6 +202,15 @@ func RunGateway() error {
 	}
 
 	gw := gateway.New(codexClient, 4, streamingMode)
+	if cfg.Cron.Enabled {
+		cronSvc := cronjob.New(cronjob.Options{
+			StorePath: cfg.Cron.StorePath,
+			Enabled:   cfg.Cron.Enabled,
+			Deliver:   gw.DeliverCron,
+			RunAgent:  gw.RunCronAgent,
+		})
+		gw.SetCron(cronSvc)
+	}
 
 	pairingStore := pairing.NewStore(30 * time.Minute)
 	var routes []server.RouteHandler
@@ -411,9 +425,17 @@ func RunGateway() error {
 			server.RouteHandler{Pattern: "/pairing/approve", Handler: pairingApproveHandler(pairingStore, approvers, tgNotifiers)},
 		)
 	}
+	if cfg.Cron.Enabled {
+		routes = append(routes, gw.CronRoutes()...)
+	}
 
 	if len(drivers) == 0 {
 		return fmt.Errorf("no channel drivers enabled; enable telegram, wecom, weixin, qqbot, or feishu")
+	}
+	for _, d := range drivers {
+		if sender, ok := d.(channel.ProactiveSender); ok {
+			gw.RegisterSender(sender)
+		}
 	}
 
 	httpServer := server.New(cfg.Server.Address, routes...)
@@ -447,4 +469,29 @@ func RunGateway() error {
 		return gatewayErr
 	}
 	return nil
+}
+
+func gatewayLoopbackURL(address string) string {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return "http://127.0.0.1:8080"
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		if strings.HasPrefix(address, ":") {
+			return "http://127.0.0.1" + address
+		}
+		if parsed, parseErr := url.Parse(address); parseErr == nil && parsed.Scheme != "" {
+			return strings.TrimRight(address, "/")
+		}
+		return "http://" + address
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		host = "[" + host + "]"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }

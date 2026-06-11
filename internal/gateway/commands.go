@@ -23,6 +23,7 @@ var commandDefs = []commandDef{
 	{"/sessions", "List recent codex sessions"},
 	{"/resume <id>", "Switch to an existing session"},
 	{"/cancel", "Cancel the running task"},
+	{"/cron", "Manage scheduled jobs for this chat"},
 	{"/status", "Show current chat context"},
 }
 

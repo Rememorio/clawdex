@@ -187,6 +187,11 @@ Config is stored in `~/.clawdex/clawdex.json`. All settings can also be overridd
   },
   "gateway": {
     "address": ":8080"
+  },
+  "cron": {
+    "enabled": true,
+    "store": "cron/jobs.json",
+    "mcp_enabled": true
   }
 }
 ```
@@ -225,6 +230,35 @@ Available in Telegram, WeCom, Weixin, QQ Bot, and Feishu:
 | `/resume <id>` | Switch to an existing session |
 | `/cancel` | Cancel the running task |
 | `/status` | Show current chat context: channel, scope, session, SOUL.md |
+| `/cron list` | List scheduled jobs for the current chat |
+| `/cron status <id\|index\|name>` | Show a scheduled job |
+| `/cron stop <id\|index\|name>` | Disable a scheduled job |
+| `/cron resume <id\|index\|name>` | Re-enable a scheduled job |
+| `/cron remove <id\|index\|name>` | Delete a scheduled job |
+| `/cron clear` | Delete all scheduled jobs for the current chat |
+
+## Scheduled Jobs
+
+clawdex can create reminders and recurring jobs from natural language. When
+Codex sees a concrete time, interval, cadence, or cron expression in a chat
+request, it can call the built-in `clawdex_cron` MCP tool to create the job for
+that same chat. Jobs persist under `~/.clawdex/cron/jobs.json` by default.
+
+The scheduler supports one-shot RFC3339 times, fixed intervals, and five-field
+cron expressions with optional IANA time zones. Fixed reminders send stored
+text; agent jobs run Codex again at schedule time and send the fresh result
+back to the originating chat.
+
+Runtime settings:
+
+| Config key | Env var | Default | Description |
+|------------|---------|---------|-------------|
+| `cron.enabled` | `CRON_ENABLED` | `true` | Enable the scheduler |
+| `cron.store` | `CRON_STORE` | `cron/jobs.json` | Job store path, relative to `~/.clawdex` unless absolute |
+| `cron.mcp_enabled` | `CRON_MCP_ENABLED` | `true` | Expose the cron MCP tool to Codex |
+
+`clawdex mcp-server cron` is the stdio MCP endpoint used by Codex through the
+gateway-issued context token. It is not normally run by hand.
 
 ## SOUL.md
 
@@ -270,6 +304,8 @@ internal/
   channel/feishu/    Feishu long-connection driver
   gateway/           Message orchestration, worker pool, slash commands
   codex/             Native Codex CLI bridge (codex exec)
+  cron/              Persistent scheduled jobs
+  mcp/               Local MCP tools exposed to Codex
   config/            Configuration loading (file + env)
   onboard/           Interactive setup wizard
   server/            HTTP server (/healthz)

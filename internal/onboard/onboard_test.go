@@ -37,6 +37,7 @@ func TestFileConfigRoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "clawdex.json")
 
 	tTrue := true
+	tFalse := false
 	tg := TelegramChannelConfig{
 		Type:           "telegram",
 		BotToken:       "${TELEGRAM_BOT_TOKEN}",
@@ -55,6 +56,11 @@ func TestFileConfigRoundTrip(t *testing.T) {
 		Gateway: GatewayFileConfig{
 			Address: ":9090",
 		},
+		Cron: CronFileConfig{
+			Enabled:    &tTrue,
+			Store:      "cron/jobs.json",
+			MCPEnabled: &tFalse,
+		},
 		Channels: map[string]json.RawMessage{
 			"telegram": MarshalTelegramChannel(tg),
 		},
@@ -69,6 +75,11 @@ func TestFileConfigRoundTrip(t *testing.T) {
 	assert.Equal(t, cfg.Codex.Timeout, loaded.Codex.Timeout)
 	assert.Equal(t, cfg.Codex.MaxOutputRunes, loaded.Codex.MaxOutputRunes)
 	assert.Equal(t, cfg.Gateway.Address, loaded.Gateway.Address)
+	require.NotNil(t, loaded.Cron.Enabled)
+	assert.True(t, *loaded.Cron.Enabled)
+	assert.Equal(t, "cron/jobs.json", loaded.Cron.Store)
+	require.NotNil(t, loaded.Cron.MCPEnabled)
+	assert.False(t, *loaded.Cron.MCPEnabled)
 	ch := MustParseTelegramChannel(loaded.Channels["telegram"])
 	assert.Equal(t, "${TELEGRAM_BOT_TOKEN}", ch.BotToken)
 	assert.Equal(t, []int64{123456}, ch.AllowFrom)
@@ -187,6 +198,7 @@ func TestFileConfig_OmitEmpty(t *testing.T) {
 	assert.NotContains(t, content, `"workdir"`)
 	assert.NotContains(t, content, `"timeout"`)
 	assert.NotContains(t, content, `"max_output_runes"`)
+	assert.Contains(t, content, `"cron": {}`)
 }
 
 func TestSaveFileConfigTo_RefuseEmptyOverwrite(t *testing.T) {
@@ -1187,6 +1199,16 @@ func TestHasMeaningfulConfig_WithGroupSandbox(t *testing.T) {
 func TestHasMeaningfulConfig_WithGatewayAddress(t *testing.T) {
 	assert.True(t, hasMeaningfulConfig(&FileConfig{
 		Gateway: GatewayFileConfig{Address: ":9090"},
+	}))
+}
+
+func TestHasMeaningfulConfig_WithCron(t *testing.T) {
+	enabled := false
+	assert.True(t, hasMeaningfulConfig(&FileConfig{
+		Cron: CronFileConfig{Enabled: &enabled},
+	}))
+	assert.True(t, hasMeaningfulConfig(&FileConfig{
+		Cron: CronFileConfig{Store: "cron/jobs.json"},
 	}))
 }
 

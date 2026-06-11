@@ -174,6 +174,11 @@ clawdex gateway uninstall
   },
   "gateway": {
     "address": ":8080"
+  },
+  "cron": {
+    "enabled": true,
+    "store": "cron/jobs.json",
+    "mcp_enabled": true
   }
 }
 ```
@@ -212,6 +217,28 @@ Telegram、企业微信、微信、QQ Bot 和飞书均支持：
 | `/resume <id>` | 切换到已有会话 |
 | `/cancel` | 取消当前运行中的任务 |
 | `/status` | 显示当前聊天上下文：渠道、作用域、会话、SOUL.md |
+| `/cron list` | 列出当前聊天的定时任务 |
+| `/cron status <id\|序号\|名称>` | 查看定时任务详情 |
+| `/cron stop <id\|序号\|名称>` | 暂停定时任务 |
+| `/cron resume <id\|序号\|名称>` | 恢复定时任务 |
+| `/cron remove <id\|序号\|名称>` | 删除定时任务 |
+| `/cron clear` | 删除当前聊天的所有定时任务 |
+
+## 定时任务
+
+clawdex 支持用自然语言创建提醒和周期任务。当聊天请求里包含明确的时间、间隔、周期或 cron 表达式时，Codex 可以调用内置的 `clawdex_cron` MCP tool，为当前聊天创建任务。任务默认持久化到 `~/.clawdex/cron/jobs.json`。
+
+调度器支持 RFC3339 一次性时间、固定间隔，以及带可选 IANA 时区的五段 cron 表达式。固定提醒会发送保存的文本；agent 任务会在调度时间重新运行 Codex，并把新的结果发回原聊天。
+
+运行时配置：
+
+| 配置项 | 环境变量 | 默认值 | 说明 |
+|--------|----------|--------|------|
+| `cron.enabled` | `CRON_ENABLED` | `true` | 启用调度器 |
+| `cron.store` | `CRON_STORE` | `cron/jobs.json` | 任务存储路径；相对路径基于 `~/.clawdex` |
+| `cron.mcp_enabled` | `CRON_MCP_ENABLED` | `true` | 向 Codex 暴露 cron MCP tool |
+
+`clawdex mcp-server cron` 是 Codex 通过网关上下文令牌调用的 stdio MCP 入口，通常不需要手动运行。
 
 ## SOUL.md
 
@@ -257,6 +284,8 @@ internal/
   channel/feishu/    飞书长连接驱动
   gateway/           消息编排、工作池、斜杠命令
   codex/             原生 Codex CLI 桥接（codex exec）
+  cron/              持久化定时任务
+  mcp/               暴露给 Codex 的本地 MCP 工具
   config/            配置加载（文件 + 环境变量）
   onboard/           交互式配置向导
   server/            HTTP 服务器（/healthz）

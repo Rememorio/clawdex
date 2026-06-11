@@ -207,6 +207,7 @@ func (d *Driver) processUpdate(ctx context.Context, upd update, handler channel.
 			SenderID:   senderID,
 			SenderName: telegramSenderName(cq.From),
 			ChatType:   telegramChatType(chatType),
+			Target:     strconv.FormatInt(chatID, 10),
 			Text:       cq.Data,
 		}, d)
 		return
@@ -326,6 +327,7 @@ func (d *Driver) processUpdate(ctx context.Context, upd update, handler channel.
 		SenderID:   senderID,
 		SenderName: telegramSenderName(msg.From),
 		ChatType:   telegramChatType(msg.Chat.Type),
+		Target:     strconv.FormatInt(msg.Chat.ID, 10),
 		Text:       text,
 		MediaPaths: mediaPaths,
 	}, d)
@@ -743,6 +745,25 @@ func (d *Driver) AddAllowedUser(userID int64) {
 // SendNotification sends a message to a specific chat ID (used for approval notifications).
 func (d *Driver) SendNotification(ctx context.Context, chatID int64, text string) error {
 	return d.api.sendMessage(ctx, chatID, text, 0, 0)
+}
+
+// SendText sends a proactive text message to a Telegram chat.
+func (d *Driver) SendText(ctx context.Context, target channel.DeliveryTarget, text string) error {
+	chatID := target.ChatID
+	if chatID == 0 && target.Target != "" {
+		if parsed, err := strconv.ParseInt(target.Target, 10, 64); err == nil {
+			chatID = parsed
+		}
+	}
+	if chatID == 0 {
+		return errors.New("telegram proactive send: missing chat id")
+	}
+	for _, chunk := range d.splitText(text) {
+		if err := d.api.sendMessage(ctx, chatID, FormatTelegramHTML(chunk), 0, target.ThreadID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func containsInt64(ids []int64, id int64) bool {

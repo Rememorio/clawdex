@@ -709,12 +709,19 @@ func (d *Driver) buildChannelMessage(
 	senderName, chatType, text string,
 	mediaPaths []string,
 ) channel.Message {
+	var target string
+	if v, ok := d.chatIDMap.Load(hashedChat); ok {
+		if chatID, ok := v.(string); ok {
+			target = chatID
+		}
+	}
 	return channel.Message{
 		Channel:    d.Name(),
 		ChatID:     hashedChat,
 		SenderID:   hashedSender,
 		SenderName: senderName,
 		ChatType:   chatType,
+		Target:     target,
 		Text:       text,
 		MediaPaths: mediaPaths,
 	}
