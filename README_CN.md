@@ -269,6 +269,7 @@ clawdex doctor --fix      # 检查并自动修复问题
 - [微信渠道](docs/WEIXIN_CN.md) — 微信个人号设置、扫码登录、输入提示、媒体。
 - [QQ Bot 渠道](docs/QQBOT_CN.md) — QQ Bot 设置、WebSocket 网关、群@提及、媒体上传。
 - [飞书渠道](docs/FEISHU_CN.md) — 飞书长连接、接收消息事件、访问控制。
+- [定时任务](docs/CRON_CN.md) — 自然语言提醒、周期任务和 cron 配置。
 
 ## 架构
 

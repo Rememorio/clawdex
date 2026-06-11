@@ -289,6 +289,7 @@ clawdex doctor --fix      # Check and auto-fix problems
 - [Weixin Channel](docs/WEIXIN.md) — Weixin (微信) personal WeChat setup, QR login, typing indicators, media.
 - [QQ Bot Channel](docs/QQBOT.md) — QQ Bot setup, WebSocket gateway, group @-mentions, media upload.
 - [Feishu Channel](docs/FEISHU.md) — Feishu long connection setup, receive-message events, access control.
+- [Scheduled Jobs](docs/CRON.md) — natural-language reminders, recurring jobs, and cron configuration.
 
 ## Architecture
 
