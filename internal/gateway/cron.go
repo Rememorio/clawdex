@@ -287,10 +287,9 @@ func (s *Service) RunCronAgent(ctx context.Context, job cronjob.Job) (string, er
 }
 
 type cronAgentEnvelope struct {
-	Messages      []cronAgentMessage `json:"messages"`
-	Batches       []cronAgentMessage `json:"batches"`
-	Parts         []cronAgentMessage `json:"parts"`
-	Notifications []cronAgentMessage `json:"notifications"`
+	Messages []cronAgentMessage `json:"messages"`
+	Batches  []cronAgentMessage `json:"batches"`
+	Parts    []cronAgentMessage `json:"parts"`
 }
 
 type cronAgentMessage struct {
@@ -302,8 +301,8 @@ type cronAgentMessage struct {
 func cronAgentPrompt(task string, now time.Time) string {
 	return "[scheduled task]\nCurrent time: " + now.Format(time.RFC3339) + "\n\n" +
 		"clawdex delivery instructions:\n" +
-		"- Do not call notify or any external messaging tool from this scheduled run.\n" +
-		"- If the user asks for multiple pushes, batches, parts, or notify calls, return all messages in the JSON envelope below and clawdex will deliver them sequentially to the originating chat.\n" +
+		"- Do not use external messaging tools from this scheduled run.\n" +
+		"- If the user asks for multiple pushes, batches, or parts, return all messages in the JSON envelope below and clawdex will deliver them sequentially to the originating chat.\n" +
 		"- Return only this JSON object when using multiple messages: {\"messages\":[{\"title\":\"...\",\"text\":\"...\"}]}.\n" +
 		"- Each messages entry becomes one proactive chat message. Put the requested title in title and the body in text.\n" +
 		"- If there is only one final response, normal text is acceptable.\n" +
@@ -333,9 +332,6 @@ func parseCronAgentJSONMessages(out string) []string {
 	}
 	if len(items) == 0 {
 		items = env.Parts
-	}
-	if len(items) == 0 {
-		items = env.Notifications
 	}
 	return formatCronAgentMessages(items)
 }

@@ -199,11 +199,11 @@ func TestParseCronAgentDelimitedMessages(t *testing.T) {
 }
 
 func TestParseCronAgentMessageAliases(t *testing.T) {
-	out := `{"notifications":[{"title":"Notice","text":"body"}]}`
+	out := `{"parts":[{"title":"Part","text":"body"}]}`
 
 	messages := parseCronAgentMessages(out)
 
-	require.Equal(t, []string{"Notice\n\nbody"}, messages)
+	require.Equal(t, []string{"Part\n\nbody"}, messages)
 }
 
 func TestRunCronAgentDeliversEnvelopeMessages(t *testing.T) {

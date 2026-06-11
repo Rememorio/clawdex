@@ -78,7 +78,7 @@ failed and sends a failure notice to the job's delivery target when possible.
 
 When an agent job needs multiple pushed messages, Codex returns a structured
 delivery envelope and clawdex sends each entry to the originating chat in order.
-This avoids depending on an external notification tool while still supporting
+This avoids depending on an external delivery tool while still supporting
 long reports split into multiple pushes. If a delivery envelope is used,
 clawdex marks the run as delivered and does not send an extra final message.
 
