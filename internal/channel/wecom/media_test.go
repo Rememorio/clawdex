@@ -186,6 +186,13 @@ func startWeComWebSocketTestServer(
 			}
 
 			switch raw.Command {
+			case wsCommandRespond:
+				require.NoError(t, writeWSTestAck(
+					conn,
+					raw.Command,
+					raw.Headers.ReqID,
+					map[string]any{"ok": true},
+				))
 			case wsCommandUploadMediaInit:
 				require.NoError(t, writeWSTestAck(
 					conn,

@@ -1271,6 +1271,12 @@ func TestReplyWithKeyboard_WebSocket(t *testing.T) {
 	d.wsSession = session
 	d.callbackReqIDs.Store(int64(1), "kb-req-1")
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = d.readWSFrames(ctx, session)
+	}()
+
 	keyboard := [][]channel.KeyboardButton{
 		{
 			{Text: "/new", CallbackData: "/new"},
@@ -2677,6 +2683,92 @@ func TestReplyViaWebSocket_NoReqID(t *testing.T) {
 	err = d.replyViaWebSocket(context.Background(), channel.Message{ChatID: 999}, "test")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no callback req_id")
+}
+
+func TestReplyViaWebSocket_WaitsForAckBetweenChunks(t *testing.T) {
+	frames := make(chan capturedWSFrame, 2)
+	ackFirst := make(chan struct{})
+	ackSecond := make(chan struct{})
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		for i := 0; i < 2; i++ {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var raw struct {
+				Command string          `json:"cmd"`
+				Headers wsFrameHeaders  `json:"headers,omitempty"`
+				Body    json.RawMessage `json:"body,omitempty"`
+			}
+			require.NoError(t, json.Unmarshal(data, &raw))
+			frames <- capturedWSFrame{
+				Command: raw.Command,
+				Headers: raw.Headers,
+				Body:    raw.Body,
+			}
+
+			if i == 0 {
+				<-ackFirst
+			} else {
+				<-ackSecond
+			}
+			require.NoError(t, writeWSTestAck(
+				conn,
+				raw.Command,
+				raw.Headers.ReqID,
+				map[string]any{"ok": true},
+			))
+		}
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	d := New(Config{ConnectionMode: "websocket", TextChunkLimit: 3}, nil)
+	session := newWSSession(conn)
+	d.wsSession = session
+	d.callbackReqIDs.Store(int64(1), "reply-req-1")
+
+	readCtx, cancelRead := context.WithCancel(context.Background())
+	defer cancelRead()
+	go func() {
+		_ = d.readWSFrames(readCtx, session)
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- d.replyViaWebSocket(
+			context.Background(),
+			channel.Message{ChatID: 1},
+			"abcdef",
+		)
+	}()
+
+	first := mustReceiveWSFrame(t, frames)
+	assert.Equal(t, wsCommandRespond, first.Command)
+	assert.Equal(t, "reply-req-1", first.Headers.ReqID)
+
+	select {
+	case frame := <-frames:
+		t.Fatalf("second frame sent before first ack: %+v", frame)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(ackFirst)
+	second := mustReceiveWSFrame(t, frames)
+	assert.Equal(t, wsCommandRespond, second.Command)
+	assert.Equal(t, "reply-req-1", second.Headers.ReqID)
+
+	close(ackSecond)
+	require.NoError(t, <-done)
 }
 
 // ── postJSON tests ──

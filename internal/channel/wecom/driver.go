@@ -216,7 +216,7 @@ func (d *Driver) replyViaWebSocket(ctx context.Context, msg channel.Message, tex
 
 	chunks := splitByByteLimit(text, d.cfg.TextChunkLimit)
 	for _, chunk := range chunks {
-		if err := session.send(ctx, wsOutboundFrame{
+		if _, err := session.request(ctx, wsOutboundFrame{
 			Command: wsCommandRespond,
 			Headers: wsFrameHeaders{ReqID: reqID},
 			Body: wsReplyBody{
