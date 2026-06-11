@@ -215,6 +215,7 @@ func (d *Driver) processInbound(ctx context.Context, msg *weixinMessage, handler
 		MessageID:    msg.MessageID,
 		SenderID:     senderID,
 		SenderName:   msg.FromUserID,
+		Target:       msg.FromUserID,
 		Text:         text,
 		MediaPaths:   mediaPaths,
 		CleanupPaths: cleanupPaths,
@@ -378,6 +379,19 @@ func (d *Driver) sendText(ctx context.Context, toUserID, text string) {
 	if err := d.api.sendMessage(ctx, outMsg); err != nil {
 		logger.Error("weixin send failed", "channel", d.name, "to", toUserID, "error", err)
 	}
+}
+
+// SendText sends a proactive text message to a Weixin user.
+func (d *Driver) SendText(ctx context.Context, target channel.DeliveryTarget, text string) error {
+	toUserID := strings.TrimSpace(target.Target)
+	if toUserID == "" {
+		return fmt.Errorf("weixin proactive send: missing target user id")
+	}
+	chunks := splitTextChunks(markdownFilter(text), d.cfg.TextChunkLimit)
+	for _, chunk := range chunks {
+		d.sendText(ctx, toUserID, chunk)
+	}
+	return nil
 }
 
 // ── Responder implementation ──

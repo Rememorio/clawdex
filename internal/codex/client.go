@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -137,6 +138,17 @@ type Client struct {
 	Store             *SessionStore
 	Trace             *TraceLogger
 	Executable        string // override for the codex binary path (default: "codex")
+	CronMCPEnabled    bool
+	CronMCPCommand    string
+	CronMCPArgs       []string
+	GatewayURL        string
+}
+
+// RunOptions carries per-run Codex execution options.
+type RunOptions struct {
+	Sandbox          string
+	Channel          string
+	CronContextToken string
 }
 
 // executableName returns the codex binary name to use.
@@ -145,6 +157,48 @@ func (c *Client) executableName() string {
 		return c.Executable
 	}
 	return codexExecutableName
+}
+
+func (c *Client) appendCronMCPArgs(args []string) []string {
+	if !c.CronMCPEnabled {
+		return args
+	}
+	command := strings.TrimSpace(c.CronMCPCommand)
+	if command == "" {
+		if exe, err := os.Executable(); err == nil && exe != "" {
+			command = exe
+		} else {
+			command = "clawdex"
+		}
+	}
+	mcpArgs := c.CronMCPArgs
+	if len(mcpArgs) == 0 {
+		mcpArgs = []string{"mcp-server", "cron"}
+	}
+	args = append(args,
+		"-c", "mcp_servers.clawdex_cron.command="+strconv.Quote(command),
+		"-c", "mcp_servers.clawdex_cron.args="+tomlStringArray(mcpArgs),
+	)
+	return args
+}
+
+func (c *Client) extraEnv(opts RunOptions) []string {
+	var env []string
+	if c.GatewayURL != "" {
+		env = append(env, "CLAWDEX_GATEWAY_URL="+c.GatewayURL)
+	}
+	if opts.CronContextToken != "" {
+		env = append(env, "CLAWDEX_CRON_CONTEXT_TOKEN="+opts.CronContextToken)
+	}
+	return env
+}
+
+func tomlStringArray(values []string) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, strconv.Quote(value))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
 }
 
 // resolveSoul returns the soul content for the given channel.
@@ -341,6 +395,11 @@ type StreamCallback func(text string)
 // Returns the final response text. channel identifies the originating channel
 // for per-instance SOUL resolution.
 func (c *Client) RunStream(parent context.Context, chatID int64, prompt string, imagePaths []string, onChunk StreamCallback, sandbox, channel string) string {
+	return c.RunStreamWithOptions(parent, chatID, prompt, imagePaths, onChunk, RunOptions{Sandbox: sandbox, Channel: channel})
+}
+
+// RunStreamWithOptions forwards one prompt to Codex with streaming output via onChunk.
+func (c *Client) RunStreamWithOptions(parent context.Context, chatID int64, prompt string, imagePaths []string, onChunk StreamCallback, opts RunOptions) string {
 	ctx, cancel := context.WithTimeout(parent, c.Timeout)
 	defer cancel()
 
@@ -354,7 +413,7 @@ func (c *Client) RunStream(parent context.Context, chatID int64, prompt string, 
 
 	sessionID := c.Store.ActiveSession(chatID)
 	if sessionID != "" {
-		result := c.execResumeStream(ctx, sessionID, lastMsgPath, prompt, imagePaths, onChunk, sandbox)
+		result := c.execResumeStream(ctx, sessionID, lastMsgPath, prompt, imagePaths, onChunk, opts)
 		if result != "" {
 			c.Store.Activate(chatID, sessionID, prompt)
 			return result
@@ -362,17 +421,18 @@ func (c *Client) RunStream(parent context.Context, chatID int64, prompt string, 
 		c.Store.Deactivate(chatID)
 	}
 
-	return c.execFreshStream(ctx, chatID, lastMsgPath, prompt, imagePaths, onChunk, sandbox, channel)
+	return c.execFreshStream(ctx, chatID, lastMsgPath, prompt, imagePaths, onChunk, opts)
 }
 
-func (c *Client) execFreshStream(ctx context.Context, chatID int64, lastMsgPath, prompt string, imagePaths []string, onChunk StreamCallback, sandbox, channel string) string {
+func (c *Client) execFreshStream(ctx context.Context, chatID int64, lastMsgPath, prompt string, imagePaths []string, onChunk StreamCallback, opts RunOptions) string {
 	args := []string{"exec", "--json", "--skip-git-repo-check", "-C", c.WorkDir, "-o", lastMsgPath}
-	if sandbox != "" {
-		args = append(args, "--sandbox", sandbox)
+	if opts.Sandbox != "" {
+		args = append(args, "--sandbox", opts.Sandbox)
 	}
+	args = c.appendCronMCPArgs(args)
 
 	var soulFile string
-	if soul := c.resolveSoul(channel); soul != "" {
+	if soul := c.resolveSoul(opts.Channel); soul != "" {
 		f, err := os.CreateTemp("", "clawdex-soul-*.md")
 		if err == nil {
 			soulFile = f.Name()
@@ -387,7 +447,7 @@ func (c *Client) execFreshStream(ctx context.Context, chatID int64, lastMsgPath,
 		args = append(args, "--image", p)
 	}
 
-	threadID, text, rawOut, err := c.runCodexStream(ctx, args, onChunk,
+	threadID, text, rawOut, err := c.runCodexStream(ctx, args, c.extraEnv(opts), onChunk,
 		func(startedThreadID string) {
 			c.Store.Activate(chatID, startedThreadID, prompt)
 		})
@@ -400,15 +460,16 @@ func (c *Client) execFreshStream(ctx context.Context, chatID int64, lastMsgPath,
 	return c.resolveOutput(ctx, text, rawOut, lastMsgPath, err)
 }
 
-func (c *Client) execResumeStream(ctx context.Context, sessionID, lastMsgPath, prompt string, imagePaths []string, onChunk StreamCallback, sandbox string) string {
+func (c *Client) execResumeStream(ctx context.Context, sessionID, lastMsgPath, prompt string, imagePaths []string, onChunk StreamCallback, opts RunOptions) string {
 	args := []string{"exec", "resume", "--json", "--skip-git-repo-check", "-o", lastMsgPath}
-	args = append(args, resumeSandboxArgs(sandbox)...)
+	args = append(args, resumeSandboxArgs(opts.Sandbox)...)
+	args = c.appendCronMCPArgs(args)
 	args = append(args, sessionID, prompt)
 	for _, p := range imagePaths {
 		args = append(args, "--image", p)
 	}
 
-	_, text, rawOut, err := c.runCodexStream(ctx, args, onChunk, nil)
+	_, text, rawOut, err := c.runCodexStream(ctx, args, c.extraEnv(opts), onChunk, nil)
 	if err != nil && text == "" && strings.TrimSpace(rawOut) == "" {
 		return ""
 	}
@@ -417,9 +478,9 @@ func (c *Client) execResumeStream(ctx context.Context, sessionID, lastMsgPath, p
 
 // runCodexStream executes codex and streams JSONL output line-by-line.
 // On each item.completed with agent_message, calls onChunk with the text.
-func (c *Client) runCodexStream(ctx context.Context, args []string, onChunk StreamCallback, onThreadStarted func(string)) (string, string, string, error) {
+func (c *Client) runCodexStream(ctx context.Context, args []string, extraEnv []string, onChunk StreamCallback, onThreadStarted func(string)) (string, string, string, error) {
 	cmd := exec.CommandContext(ctx, c.executableName(), args...)
-	cmd.Env = CleanEnv()
+	cmd.Env = append(CleanEnv(), extraEnv...)
 	setGracefulCancel(cmd)
 
 	stdout, err := cmd.StdoutPipe()
@@ -511,6 +572,11 @@ func (c *Client) runCodexStream(ctx context.Context, args []string, onChunk Stre
 // imagePaths are optional local file paths for images to attach.
 // channel identifies the originating channel for per-instance SOUL resolution.
 func (c *Client) Run(parent context.Context, chatID int64, prompt string, imagePaths []string, sandbox, channel string) string {
+	return c.RunWithOptions(parent, chatID, prompt, imagePaths, RunOptions{Sandbox: sandbox, Channel: channel})
+}
+
+// RunWithOptions forwards one prompt to Codex and returns the final response text.
+func (c *Client) RunWithOptions(parent context.Context, chatID int64, prompt string, imagePaths []string, opts RunOptions) string {
 	ctx, cancel := context.WithTimeout(parent, c.Timeout)
 	defer cancel()
 
@@ -525,7 +591,7 @@ func (c *Client) Run(parent context.Context, chatID int64, prompt string, imageP
 	sessionID := c.Store.ActiveSession(chatID)
 	if sessionID != "" {
 		// Try to resume existing session.
-		result := c.execResume(ctx, sessionID, lastMsgPath, prompt, imagePaths, sandbox)
+		result := c.execResume(ctx, sessionID, lastMsgPath, prompt, imagePaths, opts)
 		if result != "" {
 			c.Store.Activate(chatID, sessionID, prompt)
 			return result
@@ -534,21 +600,22 @@ func (c *Client) Run(parent context.Context, chatID int64, prompt string, imageP
 		c.Store.Deactivate(chatID)
 	}
 
-	return c.execFresh(ctx, chatID, lastMsgPath, prompt, imagePaths, sandbox, channel)
+	return c.execFresh(ctx, chatID, lastMsgPath, prompt, imagePaths, opts)
 }
 
 // execFresh runs a new `codex exec --json` invocation and stores the session ID.
-func (c *Client) execFresh(ctx context.Context, chatID int64, lastMsgPath, prompt string, imagePaths []string, sandbox, channel string) string {
+func (c *Client) execFresh(ctx context.Context, chatID int64, lastMsgPath, prompt string, imagePaths []string, opts RunOptions) string {
 	args := []string{"exec", "--json", "--skip-git-repo-check", "-C", c.WorkDir, "-o", lastMsgPath}
-	if sandbox != "" {
-		args = append(args, "--sandbox", sandbox)
+	if opts.Sandbox != "" {
+		args = append(args, "--sandbox", opts.Sandbox)
 	}
+	args = c.appendCronMCPArgs(args)
 
 	// Write SOUL.md content to a temp file and pass via model_instructions_file.
 	// Using -c instructions=<content> breaks when the content has newlines or
 	// special characters because codex parses the value as TOML.
 	var soulFile string
-	if soul := c.resolveSoul(channel); soul != "" {
+	if soul := c.resolveSoul(opts.Channel); soul != "" {
 		f, err := os.CreateTemp("", "clawdex-soul-*.md")
 		if err == nil {
 			soulFile = f.Name()
@@ -565,7 +632,7 @@ func (c *Client) execFresh(ctx context.Context, chatID int64, lastMsgPath, promp
 		args = append(args, "--image", p)
 	}
 
-	threadID, text, rawOut, err := c.runCodex(ctx, args,
+	threadID, text, rawOut, err := c.runCodex(ctx, args, c.extraEnv(opts),
 		func(startedThreadID string) {
 			c.Store.Activate(chatID, startedThreadID, prompt)
 		})
@@ -580,16 +647,17 @@ func (c *Client) execFresh(ctx context.Context, chatID int64, lastMsgPath, promp
 
 // execResume runs `codex exec resume --json <sessionID> <prompt>`.
 // Returns the response text, or "" if the resume failed.
-func (c *Client) execResume(ctx context.Context, sessionID, lastMsgPath, prompt string, imagePaths []string, sandbox string) string {
+func (c *Client) execResume(ctx context.Context, sessionID, lastMsgPath, prompt string, imagePaths []string, opts RunOptions) string {
 	args := []string{"exec", "resume", "--json", "--skip-git-repo-check", "-o", lastMsgPath}
-	args = append(args, resumeSandboxArgs(sandbox)...)
+	args = append(args, resumeSandboxArgs(opts.Sandbox)...)
+	args = c.appendCronMCPArgs(args)
 	// Positional args (sessionID, prompt) must come before --image.
 	args = append(args, sessionID, prompt)
 	for _, p := range imagePaths {
 		args = append(args, "--image", p)
 	}
 
-	_, text, rawOut, err := c.runCodex(ctx, args, nil)
+	_, text, rawOut, err := c.runCodex(ctx, args, c.extraEnv(opts), nil)
 	if err != nil && text == "" && strings.TrimSpace(rawOut) == "" {
 		// Resume failed with no useful output — signal caller to retry fresh.
 		return ""
@@ -599,9 +667,9 @@ func (c *Client) execResume(ctx context.Context, sessionID, lastMsgPath, prompt 
 
 // runCodex executes the codex binary with the given args and parses JSONL output.
 // Returns (threadID, agentMessageText, rawStdout, error).
-func (c *Client) runCodex(ctx context.Context, args []string, onThreadStarted func(string)) (string, string, string, error) {
+func (c *Client) runCodex(ctx context.Context, args []string, extraEnv []string, onThreadStarted func(string)) (string, string, string, error) {
 	cmd := exec.CommandContext(ctx, c.executableName(), args...)
-	cmd.Env = CleanEnv()
+	cmd.Env = append(CleanEnv(), extraEnv...)
 	setGracefulCancel(cmd)
 
 	stdout, err := cmd.StdoutPipe()

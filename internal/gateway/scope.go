@@ -4,6 +4,7 @@ import (
 	"hash/fnv"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Rememorio/clawdex/internal/channel"
 )
@@ -46,13 +47,20 @@ func sessionScopeID(msg channel.Message) int64 {
 // and attribution rules to reduce cross-speaker confusion.
 // DM chats include the sender name so the AI knows who it is talking to.
 func codexPrompt(msg channel.Message) string {
+	prefix := turnContextNote()
 	if msg.ChatType != groupChatType {
 		if name := strings.TrimSpace(msg.SenderName); name != "" {
-			return "[sender: " + name + "]\n" + msg.Text
+			return prefix + "[sender: " + name + "]\n" + msg.Text
 		}
-		return msg.Text
+		return prefix + msg.Text
 	}
-	return formatGroupPrompt(msg)
+	return prefix + formatGroupPrompt(msg)
+}
+
+func turnContextNote() string {
+	now := time.Now().Format(time.RFC3339)
+	return "[Current turn time: " + now + "]\n" +
+		"[Cron authoring: use the cron tool for reminders, delayed follow-ups, and recurring work when the user gives a concrete date, time, interval, cadence, or cron expression. Do not invent a time-based schedule when the user only asks for a future policy or preference. Use the current turn time as the source of truth for now, today, tomorrow, and relative times.]\n"
 }
 
 func formatGroupPrompt(msg channel.Message) string {

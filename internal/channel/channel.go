@@ -12,15 +12,33 @@ type Message struct {
 	SenderID     int64  // user ID of the message sender (0 = unknown)
 	SenderName   string // display name or username of the message sender
 	ChatType     string // "group" or "" (DM/default)
+	Target       string // channel-native delivery target (chat id, openid, user id)
 	Text         string
 	MediaPaths   []string // local image paths passed to codex via --image
 	CleanupPaths []string // all downloaded media paths (for temp dir cleanup)
+}
+
+// DeliveryTarget identifies a channel-native destination for proactive sends.
+type DeliveryTarget struct {
+	Channel    string `json:"channel"`
+	ChatID     int64  `json:"chat_id,omitempty"`
+	ThreadID   int64  `json:"thread_id,omitempty"`
+	ChatType   string `json:"chat_type,omitempty"`
+	Target     string `json:"target,omitempty"`
+	SenderID   int64  `json:"sender_id,omitempty"`
+	SenderName string `json:"sender_name,omitempty"`
 }
 
 // Responder sends channel-native feedback and reply messages.
 type Responder interface {
 	Typing(ctx context.Context, msg Message) error
 	Reply(ctx context.Context, msg Message, text string) error
+}
+
+// ProactiveSender sends messages without an active inbound responder.
+type ProactiveSender interface {
+	Name() string
+	SendText(ctx context.Context, target DeliveryTarget, text string) error
 }
 
 // Handler processes inbound messages from channel drivers.

@@ -57,6 +57,44 @@ var configKeys = map[string]configEntry{
 		set: func(c *onboard.FileConfig, v string) error { c.Gateway.Address = v; return nil },
 	},
 
+	// ── Cron ──
+	"cron.enabled": {
+		get: func(c *onboard.FileConfig) string {
+			if c.Cron.Enabled == nil {
+				return ""
+			}
+			return strconv.FormatBool(*c.Cron.Enabled)
+		},
+		set: func(c *onboard.FileConfig, v string) error {
+			enabled, err := strconv.ParseBool(v)
+			if err != nil {
+				return fmt.Errorf("cron.enabled must be true or false")
+			}
+			c.Cron.Enabled = &enabled
+			return nil
+		},
+	},
+	"cron.store": {
+		get: func(c *onboard.FileConfig) string { return c.Cron.Store },
+		set: func(c *onboard.FileConfig, v string) error { c.Cron.Store = v; return nil },
+	},
+	"cron.mcp_enabled": {
+		get: func(c *onboard.FileConfig) string {
+			if c.Cron.MCPEnabled == nil {
+				return ""
+			}
+			return strconv.FormatBool(*c.Cron.MCPEnabled)
+		},
+		set: func(c *onboard.FileConfig, v string) error {
+			enabled, err := strconv.ParseBool(v)
+			if err != nil {
+				return fmt.Errorf("cron.mcp_enabled must be true or false")
+			}
+			c.Cron.MCPEnabled = &enabled
+			return nil
+		},
+	},
+
 	// ── Logging ──
 	"logging.level": {
 		get: func(c *onboard.FileConfig) string { return c.Logging.Level },

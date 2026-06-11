@@ -211,6 +211,7 @@ func (d *Driver) handleC2CMessage(ctx context.Context, raw json.RawMessage) {
 		MessageID:    hashOpenID(ev.ID),
 		SenderID:     chatID,
 		SenderName:   senderID,
+		Target:       senderID,
 		Text:         strings.TrimSpace(ev.Content),
 		MediaPaths:   mediaPaths,
 		CleanupPaths: cleanupPaths,
@@ -277,6 +278,7 @@ func (d *Driver) handleGroupMessage(ctx context.Context, raw json.RawMessage) {
 		SenderID:     hashOpenID(senderID),
 		SenderName:   senderID,
 		ChatType:     "group",
+		Target:       ev.GroupOpenID,
 		Text:         stripMentions(ev.Content),
 		MediaPaths:   mediaPaths,
 		CleanupPaths: cleanupPaths,
@@ -329,6 +331,30 @@ func (d *Driver) allowGroup(groupOpenID string) bool {
 	default:
 		return contains(d.cfg.GroupAllowFrom, groupOpenID)
 	}
+}
+
+// SendText sends a proactive text message to a QQ C2C or group target.
+func (d *Driver) SendText(ctx context.Context, target channel.DeliveryTarget, text string) error {
+	_ = ctx
+	peerID := strings.TrimSpace(target.Target)
+	if peerID == "" {
+		return fmt.Errorf("qqbot proactive send: missing target")
+	}
+	chunks := chunkText(text, d.cfg.TextChunkLimit)
+	seqKey := "cron:" + peerID
+	for i, chunk := range chunks {
+		seq := d.nextMsgSeq(seqKey)
+		var err error
+		if target.ChatType == "group" {
+			err = d.api.sendGroupMessage(peerID, chunk, "", seq)
+		} else {
+			err = d.api.sendC2CMessage(peerID, chunk, "", seq)
+		}
+		if err != nil {
+			return fmt.Errorf("qqbot proactive send chunk %d/%d: %w", i+1, len(chunks), err)
+		}
+	}
+	return nil
 }
 
 // ── Helpers ──

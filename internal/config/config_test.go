@@ -192,6 +192,86 @@ func TestLoad_CodexDefaults(t *testing.T) {
 	assert.Equal(t, 120*60*1e9, float64(cfg.Codex.CommandTimeout)) // 120m in ns
 }
 
+func TestLoad_CronDefaults(t *testing.T) {
+	writeTestConfig(t, &onboard.FileConfig{
+		Channels: map[string]json.RawMessage{
+			"telegram": tgChannel(func(ch *onboard.TelegramChannelConfig) {
+				ch.BotToken = "123:token"
+			}),
+		},
+	})
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.Cron.Enabled)
+	assert.True(t, cfg.Cron.MCPEnabled)
+	assert.Equal(t, filepath.Join(os.Getenv("HOME"), ".clawdex", "cron", "jobs.json"), cfg.Cron.StorePath)
+}
+
+func TestLoad_CronFromFile(t *testing.T) {
+	enabled := false
+	mcpEnabled := false
+	writeTestConfig(t, &onboard.FileConfig{
+		Cron: onboard.CronFileConfig{
+			Enabled:    &enabled,
+			MCPEnabled: &mcpEnabled,
+			Store:      "cron/custom.json",
+		},
+		Channels: map[string]json.RawMessage{
+			"telegram": tgChannel(func(ch *onboard.TelegramChannelConfig) {
+				ch.BotToken = "123:token"
+			}),
+		},
+	})
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.Cron.Enabled)
+	assert.False(t, cfg.Cron.MCPEnabled)
+	assert.Equal(t, filepath.Join(os.Getenv("HOME"), ".clawdex", "cron", "custom.json"), cfg.Cron.StorePath)
+}
+
+func TestLoad_CronEnvOverridesFile(t *testing.T) {
+	enabled := false
+	mcpEnabled := false
+	t.Setenv("CRON_ENABLED", "true")
+	t.Setenv("CRON_MCP_ENABLED", "true")
+	t.Setenv("CRON_STORE", "override/jobs.json")
+	writeTestConfig(t, &onboard.FileConfig{
+		Cron: onboard.CronFileConfig{
+			Enabled:    &enabled,
+			MCPEnabled: &mcpEnabled,
+			Store:      "cron/custom.json",
+		},
+		Channels: map[string]json.RawMessage{
+			"telegram": tgChannel(func(ch *onboard.TelegramChannelConfig) {
+				ch.BotToken = "123:token"
+			}),
+		},
+	})
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.Cron.Enabled)
+	assert.True(t, cfg.Cron.MCPEnabled)
+	assert.Equal(t, filepath.Join(os.Getenv("HOME"), ".clawdex", "override", "jobs.json"), cfg.Cron.StorePath)
+}
+
+func TestLoad_CronInvalidBoolEnv(t *testing.T) {
+	t.Setenv("CRON_ENABLED", "sometimes")
+	writeTestConfig(t, &onboard.FileConfig{
+		Channels: map[string]json.RawMessage{
+			"telegram": tgChannel(func(ch *onboard.TelegramChannelConfig) {
+				ch.BotToken = "123:token"
+			}),
+		},
+	})
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid CRON_ENABLED")
+}
+
 func TestLoad_CodexFromFile(t *testing.T) {
 	writeTestConfig(t, &onboard.FileConfig{
 		Codex: onboard.CodexFileConfig{

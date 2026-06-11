@@ -196,6 +196,21 @@ func (d *Driver) reply(ctx context.Context, messageID, chatID string, replyInThr
 	return nil
 }
 
+// SendText sends a proactive text message to a Feishu chat.
+func (d *Driver) SendText(ctx context.Context, target channel.DeliveryTarget, text string) error {
+	chatID := strings.TrimSpace(target.Target)
+	if chatID == "" {
+		return fmt.Errorf("feishu proactive send: missing chat id")
+	}
+	chunks := splitText(text, d.cfg.TextChunkLimit)
+	for i, chunk := range chunks {
+		if err := d.api.SendText(ctx, chatID, chunk); err != nil {
+			return fmt.Errorf("feishu proactive send chunk %d/%d: %w", i+1, len(chunks), err)
+		}
+	}
+	return nil
+}
+
 type responder struct {
 	driver        *Driver
 	messageID     string
@@ -363,6 +378,7 @@ func (d *Driver) handleMessageEvent(ctx context.Context, event *larkim.P2Message
 		SenderID:     senderHash,
 		SenderName:   senderOpenID,
 		ChatType:     chatType,
+		Target:       chatID,
 		Text:         text,
 		MediaPaths:   mediaPaths,
 		CleanupPaths: mediaPaths,

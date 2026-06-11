@@ -17,6 +17,7 @@ import (
 
 	"github.com/Rememorio/clawdex/internal/channel"
 	"github.com/Rememorio/clawdex/internal/codex"
+	cronjob "github.com/Rememorio/clawdex/internal/cron"
 	"github.com/Rememorio/clawdex/internal/logger"
 )
 
@@ -65,6 +66,9 @@ type Service struct {
 	streaming     string // "off", "partial" (default), "progress"
 	chatLocks     sync.Map
 	activeCancels sync.Map // key: chatScopeKey(msg) → *jobControl
+	cron          *cronjob.Service
+	senders       sync.Map // channel name → channel.ProactiveSender
+	cronContexts  sync.Map // token → cronContext
 }
 
 // New creates a gateway service with the requested worker count.
@@ -78,9 +82,34 @@ func New(c *codex.Client, workers int, streaming string) *Service {
 	return &Service{codexClient: c, workers: workers, streaming: streaming}
 }
 
+func (s *Service) SetCron(cronSvc *cronjob.Service) {
+	s.cron = cronSvc
+}
+
+func (s *Service) RegisterSender(sender channel.ProactiveSender) {
+	if sender == nil || sender.Name() == "" {
+		return
+	}
+	s.senders.Store(sender.Name(), sender)
+}
+
+type cronContext struct {
+	Msg       channel.Message
+	Delivery  channel.DeliveryTarget
+	ScopeID   int64
+	ExpiresAt time.Time
+}
+
 // Run starts all channel drivers and processes inbound messages until
 // context cancellation or fatal driver error.
 func (s *Service) Run(ctx context.Context, drivers ...channel.Driver) error {
+	if s.cron != nil {
+		if err := s.cron.Start(ctx); err != nil {
+			return err
+		}
+		defer s.cron.Stop()
+	}
+
 	jobs := make(chan job)
 	wgWorkers := sync.WaitGroup{}
 
@@ -242,6 +271,16 @@ func (s *Service) processJob(ctx context.Context, j job) {
 	defer unlock()
 	defer cleanupMediaDirs(j.msg.MediaPaths, j.msg.CleanupPaths)
 
+	if resp, ok := s.handleCronCommand(ctx, j.msg); ok {
+		logger.Info("cron command handled",
+			"channel", j.msg.Channel,
+			"chat", j.msg.ChatID,
+			"cmd", j.msg.Text,
+		)
+		s.replyCommand(ctx, j, resp)
+		return
+	}
+
 	// Create a cancellable context for this job.
 	jobCtx, cancelJob := context.WithCancel(ctx)
 	defer cancelJob()
@@ -309,13 +348,18 @@ func (s *Service) processJob(ctx context.Context, j job) {
 	sandbox := s.resolveSandbox(j.msg)
 	scopeID := sessionScopeID(j.msg)
 	prompt := codexPrompt(j.msg)
-	out := s.codexClient.Run(
+	cronToken := s.newCronContext(j.msg)
+	s.logCronContext(j.msg, cronToken)
+	out := s.codexClient.RunWithOptions(
 		jobCtx,
 		scopeID,
 		prompt,
 		j.msg.MediaPaths,
-		sandbox,
-		j.msg.Channel,
+		codex.RunOptions{
+			Sandbox:          sandbox,
+			Channel:          j.msg.Channel,
+			CronContextToken: cronToken,
+		},
 	)
 	out = stripThinkingTags(out)
 	logger.Info("codex run finished",
@@ -574,6 +618,8 @@ func (s *Service) runEditStreaming(ctx context.Context, j job, sr channel.Stream
 
 	scopeID := sessionScopeID(j.msg)
 	prompt := codexPrompt(j.msg)
+	cronToken := s.newCronContext(j.msg)
+	s.logCronContext(j.msg, cronToken)
 	// Mirror RunStream's internal WithTimeout into our ctx so we can detect
 	// "codex hit its CommandTimeout" via ctx.Err() == DeadlineExceeded after
 	// RunStream returns. Without this, RunStream's child ctx swallows the
@@ -581,14 +627,17 @@ func (s *Service) runEditStreaming(ctx context.Context, j job, sr channel.Stream
 	// genuine completion from a forced timeout.
 	streamCtx, cancelStream := s.codexStreamContext(ctx)
 	defer cancelStream()
-	out := s.codexClient.RunStream(
+	out := s.codexClient.RunStreamWithOptions(
 		streamCtx,
 		scopeID,
 		prompt,
 		j.msg.MediaPaths,
 		onChunk,
-		sandbox,
-		j.msg.Channel,
+		codex.RunOptions{
+			Sandbox:          sandbox,
+			Channel:          j.msg.Channel,
+			CronContextToken: cronToken,
+		},
 	)
 	out = stripThinkingTags(out)
 
@@ -895,16 +944,21 @@ func (s *Service) runDraftStreaming(ctx context.Context, j job, dr channel.Draft
 
 	scopeID := sessionScopeID(j.msg)
 	prompt := codexPrompt(j.msg)
+	cronToken := s.newCronContext(j.msg)
+	s.logCronContext(j.msg, cronToken)
 	streamCtx, cancelStream := s.codexStreamContext(ctx)
 	defer cancelStream()
-	out := s.codexClient.RunStream(
+	out := s.codexClient.RunStreamWithOptions(
 		streamCtx,
 		scopeID,
 		prompt,
 		j.msg.MediaPaths,
 		onChunk,
-		sandbox,
-		j.msg.Channel,
+		codex.RunOptions{
+			Sandbox:          sandbox,
+			Channel:          j.msg.Channel,
+			CronContextToken: cronToken,
+		},
 	)
 	out = stripThinkingTags(out)
 

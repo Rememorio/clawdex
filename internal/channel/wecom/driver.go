@@ -599,6 +599,7 @@ func (d *Driver) dispatchXMLMessage(content string) {
 			SenderID:     hashedSender,
 			SenderName:   senderName,
 			ChatType:     msg.ChatType,
+			Target:       msg.ChatID,
 			Text:         text,
 			MediaPaths:   mediaPaths,
 			CleanupPaths: cleanupPaths,
@@ -676,6 +677,7 @@ func (d *Driver) dispatchJSONMessage(content string) {
 			SenderID:     hashedSender,
 			SenderName:   senderName,
 			ChatType:     msg.ChatType,
+			Target:       msg.ChatID,
 			Text:         text,
 			MediaPaths:   mediaPaths,
 			CleanupPaths: cleanupPaths,
@@ -1141,6 +1143,25 @@ func (d *Driver) lookupWebhook(hashedChatID int64) (string, string) {
 		chatID = v.(string)
 	}
 	return entry.url, chatID
+}
+
+// SendText sends a best-effort proactive WeCom message using the cached
+// response route for a recent inbound chat.
+func (d *Driver) SendText(ctx context.Context, target channel.DeliveryTarget, text string) error {
+	chatID := target.ChatID
+	if chatID == 0 && target.Target != "" {
+		chatID = hashChatID(d.name, target.Target)
+	}
+	if chatID == 0 {
+		return fmt.Errorf("wecom proactive send: missing chat id")
+	}
+	msg := channel.Message{
+		Channel:  d.name,
+		ChatID:   chatID,
+		ChatType: target.ChatType,
+		Target:   target.Target,
+	}
+	return d.Reply(ctx, msg, text)
 }
 
 func (d *Driver) postJSON(ctx context.Context, webhookURL string, payload any) error {

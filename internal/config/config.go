@@ -21,6 +21,7 @@ import (
 type Config struct {
 	Server   ServerConfig
 	Logging  LoggingConfig
+	Cron     CronConfig
 	Telegram []TelegramConfig
 	WeCom    []WeComConfig
 	Weixin   []WeixinConfig
@@ -39,6 +40,13 @@ type LoggingConfig struct {
 	Level     string // debug, info, warn, error
 	Format    string // text, json
 	CodexFile string // detailed Codex trace log file
+}
+
+// CronConfig controls scheduled jobs.
+type CronConfig struct {
+	Enabled    bool
+	StorePath  string
+	MCPEnabled bool
 }
 
 // TelegramConfig controls Telegram channel integration.
@@ -212,6 +220,43 @@ func Load() (*Config, error) {
 		address = ":8080"
 	}
 
+	dataDir, err := daemon.DataDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve data directory: %w", err)
+	}
+
+	cronEnabled := true
+	if fileCfg.Cron.Enabled != nil {
+		cronEnabled = *fileCfg.Cron.Enabled
+	}
+	if value := strings.TrimSpace(os.Getenv("CRON_ENABLED")); value != "" {
+		parsed, err := parseBoolEnv("CRON_ENABLED", value)
+		if err != nil {
+			return nil, err
+		}
+		cronEnabled = parsed
+	}
+
+	cronMCPEnabled := true
+	if fileCfg.Cron.MCPEnabled != nil {
+		cronMCPEnabled = *fileCfg.Cron.MCPEnabled
+	}
+	if value := strings.TrimSpace(os.Getenv("CRON_MCP_ENABLED")); value != "" {
+		parsed, err := parseBoolEnv("CRON_MCP_ENABLED", value)
+		if err != nil {
+			return nil, err
+		}
+		cronMCPEnabled = parsed
+	}
+
+	cronStore := envOr("CRON_STORE", fileCfg.Cron.Store)
+	if cronStore == "" {
+		cronStore = filepath.Join(dataDir, "cron", "jobs.json")
+	}
+	if !filepath.IsAbs(cronStore) {
+		cronStore = filepath.Join(dataDir, cronStore)
+	}
+
 	commandTimeout := 120 * time.Minute
 	timeoutStr := envOr("CODEX_TIMEOUT", fileCfg.Codex.Timeout)
 	if timeoutStr != "" {
@@ -259,6 +304,11 @@ func Load() (*Config, error) {
 			Level:     envOr("LOG_LEVEL", fileCfg.Logging.Level),
 			Format:    envOr("LOG_FORMAT", fileCfg.Logging.Format),
 			CodexFile: envOr("LOG_CODEX_FILE", fileCfg.Logging.CodexFile),
+		},
+		Cron: CronConfig{
+			Enabled:    cronEnabled,
+			StorePath:  cronStore,
+			MCPEnabled: cronMCPEnabled,
 		},
 		Codex: CodexConfig{
 			WorkDir:        workDir,
@@ -1061,6 +1111,17 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func parseBoolEnv(key, value string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true, nil
+	case "0", "false", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid %s %q: must be true or false", key, value)
+	}
 }
 
 func parseCommaSepInt64(s string) ([]int64, error) {

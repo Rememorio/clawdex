@@ -57,6 +57,7 @@ type FileConfig struct {
 	Meta     MetaFileConfig             `json:"meta,omitempty"`
 	Codex    CodexFileConfig            `json:"codex"`
 	Gateway  GatewayFileConfig          `json:"gateway"`
+	Cron     CronFileConfig             `json:"cron,omitempty"`
 	Logging  LoggingFileConfig          `json:"logging,omitempty"`
 	Channels map[string]json.RawMessage `json:"channels,omitempty"`
 }
@@ -129,6 +130,13 @@ type CodexFileConfig struct {
 // GatewayFileConfig holds gateway server settings.
 type GatewayFileConfig struct {
 	Address string `json:"address,omitempty"`
+}
+
+// CronFileConfig holds scheduled job configuration.
+type CronFileConfig struct {
+	Enabled    *bool  `json:"enabled,omitempty"`
+	Store      string `json:"store,omitempty"`
+	MCPEnabled *bool  `json:"mcp_enabled,omitempty"`
 }
 
 // WeComGroupRuleFile defines per-group access settings for the config file.
@@ -452,6 +460,9 @@ func hasMeaningfulConfig(cfg *FileConfig) bool {
 		return true
 	}
 	if cfg.Gateway.Address != "" {
+		return true
+	}
+	if cfg.Cron.Enabled != nil || cfg.Cron.Store != "" || cfg.Cron.MCPEnabled != nil {
 		return true
 	}
 	if cfg.Logging.Level != "" || cfg.Logging.Format != "" ||
