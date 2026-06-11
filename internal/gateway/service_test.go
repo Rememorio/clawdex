@@ -2138,6 +2138,7 @@ func TestHandleCardEvent_SessionsHelp(t *testing.T) {
 	card := svc.HandleCardEvent(context.Background(), msg, "/sessions:help", "")
 	require.NotNil(t, card)
 	assert.Equal(t, "Help", card.Title)
+	assert.Contains(t, card.Desc, "/cron")
 }
 
 func TestHandleCardEvent_SessionsStatus(t *testing.T) {

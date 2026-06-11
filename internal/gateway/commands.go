@@ -163,7 +163,7 @@ func cmdHelp(_ *codex.Client, msg channel.Message, _ string) commandResponse {
 	if !isGroup {
 		helpCard := channel.SessionCard{
 			Title: "Help",
-			Desc:  "Available commands",
+			Desc:  "Available commands, including /cron jobs",
 			Body:  b.String(),
 			Buttons: []channel.SessionCardButton{
 				{Text: "/sessions", CallbackData: "/sessions:sessions"},

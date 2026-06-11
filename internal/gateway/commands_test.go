@@ -81,6 +81,8 @@ func TestHandleCommand_Help_HasSessionCard(t *testing.T) {
 	assert.True(t, ok)
 	require.NotNil(t, resp.sessionCard)
 	assert.Equal(t, "Help", resp.sessionCard.Title)
+	assert.Contains(t, resp.sessionCard.Desc, "/cron")
+	assert.Contains(t, resp.sessionCard.Body, "/cron list")
 	require.Len(t, resp.sessionCard.Buttons, 2)
 	assert.Equal(t, "/sessions", resp.sessionCard.Buttons[0].Text)
 	assert.Equal(t, "/status", resp.sessionCard.Buttons[1].Text)
