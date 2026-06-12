@@ -241,9 +241,10 @@ Available in Telegram, WeCom, Weixin, QQ Bot, and Feishu:
 ## Scheduled Jobs
 
 clawdex can create reminders and recurring jobs from natural language. When
-Codex sees a concrete time, interval, cadence, or cron expression in a chat
-request, it can call the built-in `clawdex_cron` MCP tool to create the job for
-that same chat. Jobs persist under `~/.clawdex/cron/jobs.json` by default.
+the gateway sees a common concrete reminder or daily-task request, it creates
+the job directly for that chat. More complex scheduled work can be created by
+Codex through the built-in `clawdex_cron` MCP tool. Jobs persist under
+`~/.clawdex/cron/jobs.json` by default.
 
 The scheduler supports one-shot RFC3339 times, fixed intervals, and five-field
 cron expressions with optional IANA time zones. Fixed reminders send stored
@@ -253,6 +254,10 @@ scheduled runs keep their own continuity without colliding with the live chat
 session that created them. When an agent job needs multiple pushed messages,
 clawdex can split the agent's structured delivery envelope and send each
 message in order.
+
+For explicit reminder or scheduling requests, clawdex either creates a cron job
+or returns a clear scheduling error. It does not use shell sleep or polling as a
+scheduled-job substitute.
 
 Runtime settings:
 

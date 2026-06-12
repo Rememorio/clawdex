@@ -1,14 +1,15 @@
 # 定时任务
 
-clawdex 可以为任意聊天持久化提醒和周期任务。推荐使用方式是自然语言：当用户提出明确的未来时间、间隔、周期或 cron 表达式时，Codex 会调用内置的 `clawdex_cron` MCP tool，网关会把任务创建到当前聊天。
+clawdex 可以为任意聊天持久化提醒和周期任务。推荐使用方式是自然语言：gateway 会直接创建常见的提醒和每日任务，更复杂的定时任务可以通过内置的 `clawdex_cron` MCP tool 创建到当前聊天。
 
 ## 工作方式
 
 1. 聊天消息进入 gateway。
-2. gateway 启动 Codex，并注入一个短期有效的 cron 上下文令牌。
-3. Codex 可以调用本地 MCP server（`clawdex mcp-server cron`）。
-4. MCP server 把请求回传给 gateway 的 `/cron/tool`。
-5. gateway 校验任务属于当前聊天，然后持久化到 cron store。
+2. gateway 会直接创建简单、明确的提醒和每日任务。
+3. 否则，gateway 启动 Codex，并注入一个短期有效的 cron 上下文令牌。
+4. Codex 可以调用本地 MCP server（`clawdex mcp-server cron`）。
+5. MCP server 把请求回传给 gateway 的 `/cron/tool`。
+6. gateway 校验任务属于当前聊天，然后持久化到 cron store。
 
 用户通常不需要手动运行 `clawdex mcp-server cron`。它会由 gateway 启动的 Codex 进程通过注入的 MCP 配置自动调用。
 
@@ -24,6 +25,8 @@ clawdex 可以为任意聊天持久化提醒和周期任务。推荐使用方式
 ```
 
 Codex 只应在请求包含明确调度时间时创建任务。如果时间不明确，应先追问，而不是猜测。
+
+对于明确的提醒或定时请求，clawdex 要么创建 cron 任务，要么返回清晰的调度错误；不能用阻塞的 shell sleep、轮询或会话内等待来替代定时任务。
 
 ## 管理任务
 

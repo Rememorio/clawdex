@@ -1,17 +1,18 @@
 # Scheduled Jobs
 
 clawdex can persist reminders and recurring work for any chat. The intended
-flow is natural language: when a user asks for a concrete future time, interval,
-cadence, or cron expression, Codex calls the built-in `clawdex_cron` MCP tool
-and the gateway creates the job for the current chat.
+flow is natural language: the gateway directly creates common reminder and
+daily-task requests, and more complex scheduled work can be created through the
+built-in `clawdex_cron` MCP tool for the current chat.
 
 ## How It Works
 
 1. A chat message reaches the gateway.
-2. The gateway starts Codex with a short-lived cron context token.
-3. Codex can call the local MCP server (`clawdex mcp-server cron`).
-4. The MCP server posts the request back to the gateway at `/cron/tool`.
-5. The gateway validates that the job belongs to the current chat and persists
+2. The gateway creates simple concrete reminders and daily tasks directly.
+3. Otherwise, the gateway starts Codex with a short-lived cron context token.
+4. Codex can call the local MCP server (`clawdex mcp-server cron`).
+5. The MCP server posts the request back to the gateway at `/cron/tool`.
+6. The gateway validates that the job belongs to the current chat and persists
    it in the cron store.
 
 Users normally do not run `clawdex mcp-server cron` directly. It is started by
@@ -31,6 +32,10 @@ At 2026-06-12T09:00:00+08:00 send "standup starts".
 Codex should only create a job when the request includes a concrete schedule.
 If the time is ambiguous, Codex should ask a follow-up question instead of
 guessing.
+
+For explicit reminder or scheduling requests, clawdex either creates a cron job
+or returns a clear scheduling error. It must not substitute a blocking shell
+sleep, polling loop, or other in-session wait for a scheduled job.
 
 ## Managing Jobs
 
