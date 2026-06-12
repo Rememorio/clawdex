@@ -20,6 +20,7 @@ import (
 )
 
 var term = termcolor.New(os.Stdout)
+var currentExecutable = os.Executable
 
 func dim(s string) string {
 	return term.Dim(s)
@@ -190,7 +191,7 @@ func Start() error {
 		return fmt.Errorf("open log file: %w", err)
 	}
 
-	execPath, err := os.Executable()
+	execPath, err := currentExecutable()
 	if err != nil {
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
