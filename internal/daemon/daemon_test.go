@@ -25,6 +25,15 @@ func setupTestHome(t *testing.T) string {
 	return dir
 }
 
+func stubGatewayExecutable(t *testing.T, body string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "gateway-stub")
+	require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755))
+	old := currentExecutable
+	currentExecutable = func() (string, error) { return path, nil }
+	t.Cleanup(func() { currentExecutable = old })
+}
+
 func writeTestConfig(t *testing.T, content string) {
 	t.Helper()
 	configPath, err := configFilePath()
@@ -377,8 +386,9 @@ func TestStart_AlreadyRunning(t *testing.T) {
 
 func TestRestart_NothingRunning(t *testing.T) {
 	setupTestHome(t)
+	stubGatewayExecutable(t, "exit 2")
 	// Restart when nothing is running should attempt Start.
-	// Start will fail because the binary isn't "gateway run" compatible,
+	// Start will fail because the stub exits immediately,
 	// but it exercises the Restart code path.
 	err := Restart()
 	// It either succeeds (starts something) or fails at exec — both are fine
@@ -446,6 +456,7 @@ func TestRestart_WithRunningProcess(t *testing.T) {
 		t.Skip("skipping on CI: spawns detached processes that can outlive the test runner")
 	}
 	setupTestHome(t)
+	stubGatewayExecutable(t, "exit 2")
 
 	// Ensure data dir exists
 	_, err := DataDir()
@@ -1153,6 +1164,7 @@ func TestProcessUptime_CurrentProcessNonEmpty(t *testing.T) {
 
 func TestStart_StalePIDCleanedup(t *testing.T) {
 	setupTestHome(t)
+	stubGatewayExecutable(t, "exit 2")
 
 	// Write a stale PID (dead process)
 	pidPath, err := PIDPath()
@@ -1160,14 +1172,18 @@ func TestStart_StalePIDCleanedup(t *testing.T) {
 	require.NoError(t, os.WriteFile(pidPath, []byte("4194304"), 0o644))
 
 	// Start should clean up stale PID and proceed.
-	// It will fail at the exec step but the stale PID cleanup is exercised.
+	// It will fail after the stub exits, but the stale PID cleanup is exercised.
 	_ = Start()
 
-	// Verify the stale PID was cleaned up (the new process may or may not have succeeded).
+	// Verify the stale PID was cleaned up.
+	pid, err := ReadPID()
+	require.NoError(t, err)
+	assert.Equal(t, 0, pid)
 }
 
 func TestRestart_StalePIDCleaned(t *testing.T) {
 	setupTestHome(t)
+	stubGatewayExecutable(t, "exit 2")
 
 	// Write a stale PID
 	pidPath, err := PIDPath()
@@ -1179,9 +1195,8 @@ func TestRestart_StalePIDCleaned(t *testing.T) {
 
 	// The stale PID file should be cleaned up.
 	pid, err := ReadPID()
-	// If Restart succeeded to start, there'll be a new PID. If it failed, 0.
-	_ = pid
-	_ = err
+	require.NoError(t, err)
+	assert.Equal(t, 0, pid)
 }
 
 func TestSummarizeChannels_SortsAlphabetically(t *testing.T) {
