@@ -17,8 +17,17 @@ import (
 )
 
 const (
-	defaultGatewayURL = "http://127.0.0.1:8080"
-	cronToolName      = "cron"
+	defaultGatewayURL      = "http://127.0.0.1:8080"
+	defaultProtocolVersion = "2024-11-05"
+	cronToolName           = "cron"
+	cronServerInstructions = "Use the cron tool for user-requested reminders, delayed follow-ups, and recurring work. Never replace scheduled work with shell sleep or polling. If a schedule cannot be created, report the tool error clearly."
+)
+
+type mcpFraming int
+
+const (
+	mcpFramingContentLength mcpFraming = iota
+	mcpFramingJSONLine
 )
 
 type Server struct {
@@ -46,7 +55,7 @@ func NewCronServer(in io.Reader, out io.Writer) *Server {
 func (s *Server) Serve(ctx context.Context) error {
 	reader := bufio.NewReader(s.in)
 	for {
-		msg, err := readMCPMessage(reader)
+		msg, framing, err := readMCPFrame(reader)
 		if err != nil {
 			if err == io.EOF {
 				return nil
@@ -67,7 +76,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		} else {
 			resp.Result = result
 		}
-		if err := writeMCPMessage(s.out, resp); err != nil {
+		if err := writeMCPFrame(s.out, resp, framing); err != nil {
 			return err
 		}
 	}
@@ -95,16 +104,7 @@ type rpcError struct {
 func (s *Server) handle(ctx context.Context, req rpcRequest) (any, error) {
 	switch req.Method {
 	case "initialize":
-		return map[string]any{
-			"protocolVersion": "2024-11-05",
-			"capabilities": map[string]any{
-				"tools": map[string]any{},
-			},
-			"serverInfo": map[string]any{
-				"name":    "clawdex-cron",
-				"version": version.Version,
-			},
-		}, nil
+		return initializeResult(req.Params), nil
 	case "ping":
 		return map[string]any{}, nil
 	case "tools/list":
@@ -117,6 +117,27 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) (any, error) {
 		return map[string]any{"prompts": []any{}}, nil
 	default:
 		return nil, fmt.Errorf("unsupported MCP method %s", req.Method)
+	}
+}
+
+func initializeResult(raw json.RawMessage) map[string]any {
+	protocolVersion := defaultProtocolVersion
+	var params struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if len(raw) > 0 && json.Unmarshal(raw, &params) == nil && strings.TrimSpace(params.ProtocolVersion) != "" {
+		protocolVersion = strings.TrimSpace(params.ProtocolVersion)
+	}
+	return map[string]any{
+		"protocolVersion": protocolVersion,
+		"capabilities": map[string]any{
+			"tools": map[string]any{},
+		},
+		"serverInfo": map[string]any{
+			"name":    "clawdex-cron",
+			"version": version.Version,
+		},
+		"instructions": cronServerInstructions,
 	}
 }
 
@@ -301,14 +322,17 @@ func cronPayloadSchema() map[string]any {
 	}
 }
 
-func readMCPMessage(r *bufio.Reader) ([]byte, error) {
+func readMCPFrame(r *bufio.Reader) ([]byte, mcpFraming, error) {
 	contentLength := -1
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {
-			return nil, err
+			return nil, mcpFramingContentLength, err
 		}
 		line = strings.TrimRight(line, "\r\n")
+		if contentLength < 0 && strings.HasPrefix(strings.TrimSpace(line), "{") {
+			return []byte(strings.TrimSpace(line)), mcpFramingJSONLine, nil
+		}
 		if line == "" {
 			break
 		}
@@ -319,19 +343,39 @@ func readMCPMessage(r *bufio.Reader) ([]byte, error) {
 		if strings.EqualFold(strings.TrimSpace(name), "Content-Length") {
 			parsed, err := strconv.Atoi(strings.TrimSpace(value))
 			if err != nil {
-				return nil, err
+				return nil, mcpFramingContentLength, err
 			}
 			contentLength = parsed
 		}
 	}
 	if contentLength < 0 {
-		return nil, fmt.Errorf("missing Content-Length")
+		return nil, mcpFramingContentLength, fmt.Errorf("missing Content-Length")
 	}
 	data := make([]byte, contentLength)
 	if _, err := io.ReadFull(r, data); err != nil {
-		return nil, err
+		return nil, mcpFramingContentLength, err
 	}
-	return data, nil
+	return data, mcpFramingContentLength, nil
+}
+
+func readMCPMessage(r *bufio.Reader) ([]byte, error) {
+	data, _, err := readMCPFrame(r)
+	return data, err
+}
+
+func writeMCPFrame(w io.Writer, v any, framing mcpFraming) error {
+	if framing == mcpFramingJSONLine {
+		data, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		if _, err := w.Write(data); err != nil {
+			return err
+		}
+		_, err = w.Write([]byte("\n"))
+		return err
+	}
+	return writeMCPMessage(w, v)
 }
 
 func writeMCPMessage(w io.Writer, v any) error {

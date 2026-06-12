@@ -220,6 +220,7 @@ echo "$CLAWDEX_CRON_CONTEXT_TOKEN" > ` + envFile + `
 		Timeout:        10 * time.Second,
 		CronMCPEnabled: true,
 		CronMCPCommand: "clawdex",
+		GatewayURL:     "http://127.0.0.1:10086",
 		Store:          NewSessionStore(filepath.Join(t.TempDir(), "sessions.json")),
 	}
 
@@ -229,7 +230,11 @@ echo "$CLAWDEX_CRON_CONTEXT_TOKEN" > ` + envFile + `
 
 	argsData, err := os.ReadFile(argsFile)
 	require.NoError(t, err)
-	assert.Contains(t, string(argsData), "mcp_servers.clawdex_cron.command=\"clawdex\"")
+	argsText := string(argsData)
+	assert.Contains(t, argsText, "mcp_servers.clawdex_cron.command=\"clawdex\"")
+	assert.Contains(t, argsText, "mcp_servers.clawdex_cron.startup_timeout_sec=60")
+	assert.Contains(t, argsText, "mcp_servers.clawdex_cron.env.CLAWDEX_GATEWAY_URL=\"http://127.0.0.1:10086\"")
+	assert.Contains(t, argsText, "mcp_servers.clawdex_cron.env.CLAWDEX_CRON_CONTEXT_TOKEN=\"token-123\"")
 
 	envData, err := os.ReadFile(envFile)
 	require.NoError(t, err)

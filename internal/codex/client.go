@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -152,6 +153,8 @@ type RunOptions struct {
 	DisableCronMCP   bool
 }
 
+const cronMCPStartupTimeoutSec = 60
+
 // executableName returns the codex binary name to use.
 func (c *Client) executableName() string {
 	if c.Executable != "" {
@@ -179,7 +182,14 @@ func (c *Client) appendCronMCPArgs(args []string, opts RunOptions) []string {
 	args = append(args,
 		"-c", "mcp_servers.clawdex_cron.command="+strconv.Quote(command),
 		"-c", "mcp_servers.clawdex_cron.args="+tomlStringArray(mcpArgs),
+		"-c", fmt.Sprintf("mcp_servers.clawdex_cron.startup_timeout_sec=%d", cronMCPStartupTimeoutSec),
 	)
+	if c.GatewayURL != "" {
+		args = append(args, "-c", "mcp_servers.clawdex_cron.env.CLAWDEX_GATEWAY_URL="+strconv.Quote(c.GatewayURL))
+	}
+	if opts.CronContextToken != "" {
+		args = append(args, "-c", "mcp_servers.clawdex_cron.env.CLAWDEX_CRON_CONTEXT_TOKEN="+strconv.Quote(opts.CronContextToken))
+	}
 	return args
 }
 

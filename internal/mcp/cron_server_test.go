@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,6 +50,21 @@ func TestServeToolsList(t *testing.T) {
 	tool := tools[0].(map[string]any)
 	assert.Equal(t, cronToolName, tool["name"])
 	assert.Contains(t, tool["description"], "scheduled jobs")
+}
+
+func TestServeInitializeJSONLineFraming(t *testing.T) {
+	var out bytes.Buffer
+	in := bytes.NewBufferString(`{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}` + "\n")
+	s := NewCronServer(in, &out)
+
+	require.NoError(t, s.Serve(context.Background()))
+	line := strings.TrimSpace(out.String())
+	assert.NotContains(t, line, "Content-Length")
+	var resp rpcResponse
+	require.NoError(t, json.Unmarshal([]byte(line), &resp))
+	require.Nil(t, resp.Error)
+	result := resp.Result.(map[string]any)
+	assert.Equal(t, "2025-06-18", result["protocolVersion"])
 }
 
 func TestServeResourcesList(t *testing.T) {
@@ -135,11 +151,14 @@ func TestToolCallRequiresContextToken(t *testing.T) {
 
 func TestHandleInitializePingAndPrompts(t *testing.T) {
 	s := NewCronServer(bytes.NewReader(nil), ioDiscard{})
+	params, err := json.Marshal(map[string]any{"protocolVersion": "2025-06-18"})
+	require.NoError(t, err)
 
-	result, err := s.handle(context.Background(), rpcRequest{Method: "initialize"})
+	result, err := s.handle(context.Background(), rpcRequest{Method: "initialize", Params: params})
 	require.NoError(t, err)
 	init := result.(map[string]any)
-	assert.Equal(t, "2024-11-05", init["protocolVersion"])
+	assert.Equal(t, "2025-06-18", init["protocolVersion"])
+	assert.Contains(t, init["instructions"], "Never replace scheduled work")
 
 	result, err = s.handle(context.Background(), rpcRequest{Method: "ping"})
 	require.NoError(t, err)
@@ -206,7 +225,11 @@ func TestToolCallReturnsGatewayErrorAsToolError(t *testing.T) {
 }
 
 func TestReadMCPMessageErrors(t *testing.T) {
-	_, err := readMCPMessage(bufio.NewReader(bytes.NewBufferString("\r\n{}")))
+	data, err := readMCPMessage(bufio.NewReader(bytes.NewBufferString("{\"jsonrpc\":\"2.0\",\"id\":1}\n")))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"jsonrpc":"2.0","id":1}`, string(data))
+
+	_, err = readMCPMessage(bufio.NewReader(bytes.NewBufferString("\r\n{}")))
 	assert.ErrorContains(t, err, "missing Content-Length")
 
 	_, err = readMCPMessage(bufio.NewReader(bytes.NewBufferString("Content-Length: x\r\n\r\n{}")))
