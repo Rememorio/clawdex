@@ -108,6 +108,83 @@ func TestServiceRunNowAgentPayload(t *testing.T) {
 	assert.Equal(t, []string{"agent result: check the build"}, delivered)
 }
 
+func TestServiceStartNowRunsDetachedFromCallerContext(t *testing.T) {
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	started := make(chan context.Context, 1)
+	release := make(chan struct{}, 1)
+	delivered := make(chan string, 1)
+	defer func() {
+		select {
+		case release <- struct{}{}:
+		default:
+		}
+	}()
+
+	svc := New(Options{
+		Enabled:   true,
+		StorePath: filepath.Join(t.TempDir(), "jobs.json"),
+		Now:       func() time.Time { return now },
+		RunAgent: func(ctx context.Context, job Job) (string, error) {
+			started <- ctx
+			<-release
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+			return "agent result", nil
+		},
+		Deliver: func(ctx context.Context, target channel.DeliveryTarget, text string) error {
+			delivered <- text
+			return nil
+		},
+	})
+
+	job, err := svc.Add(context.Background(), CreateJob{
+		Name:     "agent",
+		Schedule: Schedule{Kind: ScheduleEvery, EverySeconds: 60},
+		Payload:  Payload{Kind: PayloadAgent, Text: "check the build"},
+		Delivery: channel.DeliveryTarget{Channel: "test", ChatID: 42},
+	})
+	require.NoError(t, err)
+
+	result, err := svc.StartNow(requestCtx, job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusRunning, result.Status)
+
+	result, err = svc.StartNow(requestCtx, job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusRunning, result.Status)
+	assert.Equal(t, job.ID, result.JobID)
+
+	got, ok, err := svc.Get(context.Background(), job.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, StatusRunning, got.State.LastStatus)
+	assert.NotNil(t, got.State.RunningAt)
+
+	var runCtx context.Context
+	select {
+	case runCtx = <-started:
+	case <-time.After(time.Second):
+		t.Fatal("agent did not start")
+	}
+	cancelRequest()
+	release <- struct{}{}
+
+	select {
+	case text := <-delivered:
+		assert.Equal(t, "agent result", text)
+	case <-time.After(time.Second):
+		t.Fatal("agent result was not delivered")
+	}
+	assert.NoError(t, runCtx.Err())
+
+	require.Eventually(t, func() bool {
+		got, ok, err := svc.Get(context.Background(), job.ID)
+		return err == nil && ok && got.State.RunCount == 1 && got.State.LastStatus == StatusOK && got.State.RunningAt == nil
+	}, time.Second, 10*time.Millisecond)
+}
+
 func TestServiceRunNowAgentErrorDeliversFailureNotice(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)

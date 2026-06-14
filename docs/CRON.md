@@ -18,6 +18,11 @@ built-in `clawdex_cron` MCP tool for the current chat.
 Users normally do not run `clawdex mcp-server cron` directly. It is started by
 Codex from the MCP configuration injected into each gateway-run Codex process.
 
+Manual tool runs are asynchronous. When the MCP tool uses `action="run"`,
+clawdex marks the job as running and returns immediately; the scheduled output
+is delivered later through the job's stored delivery target. This keeps long
+agent jobs independent from the current MCP request timeout.
+
 ## Creating Jobs
 
 Ask naturally in the chat where the result should be delivered:

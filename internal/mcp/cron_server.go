@@ -20,7 +20,7 @@ const (
 	defaultGatewayURL      = "http://127.0.0.1:8080"
 	defaultProtocolVersion = "2024-11-05"
 	cronToolName           = "cron"
-	cronServerInstructions = "Use the cron tool for user-requested reminders, delayed follow-ups, and recurring work. Never replace scheduled work with shell sleep or polling. If a schedule cannot be created, report the tool error clearly."
+	cronServerInstructions = "Use the cron tool for user-requested reminders, delayed follow-ups, and recurring work. Never replace scheduled work with shell sleep or polling. If a schedule cannot be created, report the tool error clearly. The run action starts a job asynchronously; if it returns status=running, tell the user the job has started and do not block the current turn waiting for the final scheduled output."
 )
 
 type mcpFraming int
@@ -229,6 +229,7 @@ func cronToolDefinition() map[string]any {
 			"Create jobs only when the user provides a concrete date, time, interval, cadence, or cron expression.",
 			"Jobs are automatically scoped to the current chat; do not invent another delivery target.",
 			"Use payload.kind=\"message\" for fixed reminder text and payload.kind=\"agent\" when fresh reasoning should run at schedule time.",
+			"action=\"run\" starts the job asynchronously and returns status=\"running\" before final delivery completes.",
 		}, " "),
 		"inputSchema": map[string]any{
 			"type":                 "object",
