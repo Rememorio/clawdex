@@ -1215,7 +1215,7 @@ func (d *Driver) proactiveChatID(target channel.DeliveryTarget) string {
 	}
 	if v, ok := d.chatIDMap.Load(target.ChatID); ok {
 		if chatID, ok := v.(string); ok {
-			return strings.TrimSpace(chatID)
+			return normalizeProactiveTarget(chatID)
 		}
 	}
 	return ""

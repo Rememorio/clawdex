@@ -158,7 +158,10 @@ The WebSocket connection uses a JSON frame protocol:
 
 Each frame has a `cmd` field and `headers.req_id`. The `req_id` from an inbound callback **must** be echoed back in the reply frame.
 Proactive sends generate a new local `req_id` and use `aibot_send_msg`, so they
-do not depend on a cached callback `req_id`.
+do not depend on a cached callback `req_id`. Scheduled WebSocket delivery stores
+group chats as `group:<chatid>` and single chats as `single:<userid>`; the
+`chatid` field in the proactive send frame receives the resolved chat ID or user
+ID.
 
 ## Access Control
 

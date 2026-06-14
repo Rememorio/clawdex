@@ -126,7 +126,7 @@ Scheduled delivery uses each channel's proactive send implementation.
 | Weixin | Sends to the original user |
 | QQ Bot | Sends to the original C2C or group openid |
 | Feishu | Sends to the original chat |
-| WeCom | WebSocket AI bots send via `aibot_send_msg`; webhook delivery uses the cached response route |
+| WeCom | WebSocket AI bots send `group:<chatid>` and `single:<userid>` targets via `aibot_send_msg`; webhook delivery uses the cached response route |
 
 WeCom webhook bot APIs are more constrained than WebSocket AI bots. If the
 platform no longer accepts a cached webhook response route for a scheduled job,

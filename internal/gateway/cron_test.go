@@ -110,6 +110,72 @@ func TestCronToolAddAndListAreScopedToCurrentChat(t *testing.T) {
 	assert.Empty(t, otherResult.Jobs)
 }
 
+func TestCronToolListMatchesNormalizedNativeTarget(t *testing.T) {
+	svc := newCronTestService(t)
+	legacyToken := svc.newCronContext(channel.Message{
+		Channel:  "Ardelia",
+		ChatID:   -1,
+		ChatType: "group",
+		Target:   "wrk-chat",
+		Text:     "remind me every minute",
+	})
+
+	add := callCronTool(t, svc, map[string]any{
+		"token":  legacyToken,
+		"action": "add",
+		"job": map[string]any{
+			"name":     "water",
+			"schedule": map[string]any{"kind": "every", "every_seconds": 60},
+			"payload":  map[string]any{"kind": "message", "text": "drink water"},
+		},
+	})
+	require.True(t, add.OK, add.Error)
+
+	currentToken := svc.newCronContext(channel.Message{
+		Channel:  "Ardelia",
+		ChatID:   -2,
+		ChatType: "group",
+		Target:   "group:wrk-chat",
+	})
+	list := callCronTool(t, svc, map[string]any{
+		"token":  currentToken,
+		"action": "list",
+	})
+	require.True(t, list.OK, list.Error)
+	var listResult struct {
+		Jobs []cronjob.Job `json:"jobs"`
+	}
+	require.NoError(t, json.Unmarshal(list.Result, &listResult))
+	require.Len(t, listResult.Jobs, 1)
+	assert.Equal(t, "water", listResult.Jobs[0].Name)
+
+	singleToken := svc.newCronContext(channel.Message{
+		Channel:  "Ardelia",
+		ChatID:   -3,
+		ChatType: "single",
+		Target:   "single:T64560027A",
+	})
+	singleJob, err := svc.cron.Add(context.Background(), cronjob.CreateJob{
+		Name:     "dm",
+		Schedule: cronjob.Schedule{Kind: cronjob.ScheduleEvery, EverySeconds: 60},
+		Payload:  cronjob.Payload{Kind: cronjob.PayloadMessage, Text: "hello"},
+		Delivery: channel.DeliveryTarget{
+			Channel:  "Ardelia",
+			ChatID:   -4,
+			ChatType: "single",
+			Target:   "T64560027A",
+		},
+	})
+	require.NoError(t, err)
+
+	get := callCronTool(t, svc, map[string]any{
+		"token":  singleToken,
+		"action": "get",
+		"job_id": singleJob.ID,
+	})
+	assert.True(t, get.OK, get.Error)
+}
+
 func TestCronToolRejectsInvalidToken(t *testing.T) {
 	svc := newCronTestService(t)
 	out := callCronTool(t, svc, map[string]any{

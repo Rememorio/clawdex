@@ -159,7 +159,9 @@ WebSocket 连接使用 JSON 帧协议：
 
 每帧有一个 `cmd` 字段和 `headers.req_id`。入站回调的 `req_id` **必须**在回复帧中回传。
 主动发送会生成新的本地 `req_id` 并使用 `aibot_send_msg`，不依赖缓存的回调
-`req_id`。
+`req_id`。WebSocket 定时投递会把群聊保存为 `group:<chatid>`，把单聊保存为
+`single:<userid>`；主动发送帧里的 `chatid` 字段会填解析后的 chat ID 或用户
+ID。
 
 ## 访问控制
 
