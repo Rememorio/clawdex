@@ -126,11 +126,11 @@ Scheduled delivery uses each channel's proactive send implementation.
 | Weixin | Sends to the original user |
 | QQ Bot | Sends to the original C2C or group openid |
 | Feishu | Sends to the original chat |
-| WeCom | Best-effort via the cached response route for recent inbound chats |
+| WeCom | WebSocket AI bots send via `aibot_send_msg`; webhook delivery uses the cached response route |
 
-WeCom bot APIs are more constrained than the other channels. If the platform no
-longer accepts a cached response route for a scheduled job, delivery can fail
-and the job's last error will record the failure.
+WeCom webhook bot APIs are more constrained than WebSocket AI bots. If the
+platform no longer accepts a cached webhook response route for a scheduled job,
+delivery can fail and the job's last error will record the failure.
 
 ## Troubleshooting
 
@@ -150,5 +150,6 @@ and the job's last error will record the failure.
 
 - Check `/cron status <id>` for the last error.
 - Confirm the original channel instance is still enabled.
-- For WeCom, send a fresh message in the chat and try again if the cached
-  response route expired.
+- For WeCom webhook mode, send a fresh message in the chat and try again if the
+  cached response route expired. WebSocket mode requires the bot connection to
+  be online for proactive delivery.

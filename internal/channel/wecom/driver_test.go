@@ -2659,6 +2659,123 @@ func TestWebhookResponder(t *testing.T) {
 	assert.True(t, wr.SuppressTextWithMedia())
 }
 
+func TestSendText_WebSocketUsesProactiveSendWithoutCallbackReqID(t *testing.T) {
+	frames, wsURL, shutdown := startWeComWebSocketTestServer(t)
+	defer shutdown()
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	d := New(Config{ConnectionMode: "websocket"}, nil)
+	session := newWSSession(conn)
+	d.wsSession = session
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = d.readWSFrames(ctx, session)
+	}()
+
+	err = d.SendText(
+		context.Background(),
+		channel.DeliveryTarget{
+			Channel:  "wecom",
+			ChatID:   42,
+			ChatType: "group",
+			Target:   "wr-chat-1",
+		},
+		"cron result",
+	)
+	require.NoError(t, err)
+
+	frame := mustReceiveWSFrame(t, frames)
+	assert.Equal(t, wsCommandSend, frame.Command)
+	assert.Contains(t, frame.Headers.ReqID, "clawdex-send-")
+
+	var body wsSendBody
+	require.NoError(t, json.Unmarshal(frame.Body, &body))
+	assert.Equal(t, "wr-chat-1", body.ChatID)
+	assert.Equal(t, "markdown", body.MsgType)
+	require.NotNil(t, body.Markdown)
+	assert.Equal(t, "cron result", body.Markdown.Content)
+}
+
+func TestSendText_WebSocketFallsBackToCachedNativeChatID(t *testing.T) {
+	frames, wsURL, shutdown := startWeComWebSocketTestServer(t)
+	defer shutdown()
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	d := New(Config{ConnectionMode: "websocket"}, nil)
+	session := newWSSession(conn)
+	d.wsSession = session
+	d.chatIDMap.Store(int64(99), "cached-chat-99")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = d.readWSFrames(ctx, session)
+	}()
+
+	err = d.SendText(
+		context.Background(),
+		channel.DeliveryTarget{Channel: "wecom", ChatID: 99},
+		"hello",
+	)
+	require.NoError(t, err)
+
+	frame := mustReceiveWSFrame(t, frames)
+	assert.Equal(t, wsCommandSend, frame.Command)
+
+	var body wsSendBody
+	require.NoError(t, json.Unmarshal(frame.Body, &body))
+	assert.Equal(t, "cached-chat-99", body.ChatID)
+}
+
+func TestSendText_WebSocketMissingNativeChatID(t *testing.T) {
+	frames, wsURL, shutdown := startWeComWebSocketTestServer(t)
+	defer shutdown()
+	_ = frames
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	d := New(Config{ConnectionMode: "websocket"}, nil)
+	d.wsSession = newWSSession(conn)
+
+	err = d.SendText(
+		context.Background(),
+		channel.DeliveryTarget{Channel: "wecom", ChatID: 123},
+		"hello",
+	)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "missing target chat id")
+}
+
+func TestNormalizeProactiveTarget(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "raw", raw: "wr-chat", want: "wr-chat"},
+		{name: "group", raw: "group:wr-chat", want: "wr-chat"},
+		{name: "single", raw: "single:user-1", want: "user-1"},
+		{name: "query", raw: "group:wr-chat?mentions=user-1", want: "wr-chat"},
+		{name: "empty", raw: "  ", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, normalizeProactiveTarget(tt.raw))
+		})
+	}
+}
+
 // ── replyViaWebSocket tests ──
 
 func TestReplyViaWebSocket_NoSession(t *testing.T) {

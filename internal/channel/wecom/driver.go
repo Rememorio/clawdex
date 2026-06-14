@@ -1145,9 +1145,13 @@ func (d *Driver) lookupWebhook(hashedChatID int64) (string, string) {
 	return entry.url, chatID
 }
 
-// SendText sends a best-effort proactive WeCom message using the cached
-// response route for a recent inbound chat.
+// SendText sends a proactive WeCom message. WebSocket mode uses
+// aibot_send_msg; webhook mode falls back to the cached response route.
 func (d *Driver) SendText(ctx context.Context, target channel.DeliveryTarget, text string) error {
+	if d.cfg.isWebSocket() {
+		return d.sendTextViaWebSocket(ctx, target, text)
+	}
+
 	chatID := target.ChatID
 	if chatID == 0 && target.Target != "" {
 		chatID = hashChatID(d.name, target.Target)
@@ -1162,6 +1166,75 @@ func (d *Driver) SendText(ctx context.Context, target channel.DeliveryTarget, te
 		Target:   target.Target,
 	}
 	return d.Reply(ctx, msg, text)
+}
+
+func (d *Driver) sendTextViaWebSocket(
+	ctx context.Context,
+	target channel.DeliveryTarget,
+	text string,
+) error {
+	d.mu.RLock()
+	session := d.wsSession
+	d.mu.RUnlock()
+	if session == nil {
+		return fmt.Errorf("wecom websocket proactive send: no active session")
+	}
+
+	chatID := d.proactiveChatID(target)
+	if chatID == "" {
+		return fmt.Errorf("wecom websocket proactive send: missing target chat id")
+	}
+
+	chunks := splitByByteLimit(text, d.cfg.TextChunkLimit)
+	for _, chunk := range chunks {
+		if _, err := session.request(ctx, wsOutboundFrame{
+			Command: wsCommandSend,
+			Headers: wsFrameHeaders{
+				ReqID: nextWSReqID("send"),
+			},
+			Body: wsSendBody{
+				ChatID:  chatID,
+				MsgType: "markdown",
+				Markdown: &wsMarkdown{
+					Content: chunk,
+				},
+			},
+		}); err != nil {
+			return fmt.Errorf("wecom websocket proactive send: %w", err)
+		}
+	}
+	return nil
+}
+
+func (d *Driver) proactiveChatID(target channel.DeliveryTarget) string {
+	if chatID := normalizeProactiveTarget(target.Target); chatID != "" {
+		return chatID
+	}
+	if target.ChatID == 0 {
+		return ""
+	}
+	if v, ok := d.chatIDMap.Load(target.ChatID); ok {
+		if chatID, ok := v.(string); ok {
+			return strings.TrimSpace(chatID)
+		}
+	}
+	return ""
+}
+
+func normalizeProactiveTarget(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	base, _, _ := strings.Cut(value, "?")
+	switch {
+	case strings.HasPrefix(base, "group:"):
+		return strings.TrimSpace(strings.TrimPrefix(base, "group:"))
+	case strings.HasPrefix(base, "single:"):
+		return strings.TrimSpace(strings.TrimPrefix(base, "single:"))
+	default:
+		return base
+	}
 }
 
 func (d *Driver) postJSON(ctx context.Context, webhookURL string, payload any) error {
