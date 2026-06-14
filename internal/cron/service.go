@@ -275,35 +275,78 @@ func (s *Service) Remove(ctx context.Context, id string) (bool, error) {
 }
 
 func (s *Service) RunNow(ctx context.Context, id string) (RunResult, error) {
+	job, runAt, _, err := s.beginRun(id)
+	if err != nil {
+		return RunResult{}, err
+	}
+
+	result := s.execute(ctx, job)
+	s.finishRun(id, runAt, result)
+	return result, nil
+}
+
+var errJobAlreadyRunning = errors.New("cron job is already running")
+
+// StartNow starts a manual run in the background and returns after the job is
+// marked running. The execution is bound to the scheduler lifecycle, not to the
+// caller's request context.
+func (s *Service) StartNow(ctx context.Context, id string) (RunResult, error) {
+	job, runAt, serviceCtx, err := s.beginRun(id)
+	if errors.Is(err, errJobAlreadyRunning) {
+		return RunResult{JobID: job.ID, Status: StatusRunning}, nil
+	}
+	if err != nil {
+		return RunResult{}, err
+	}
+	runCtx := serviceCtx
+	if runCtx == nil {
+		runCtx = detachedContext(ctx)
+	}
+	go func() {
+		result := s.execute(runCtx, job)
+		s.finishRun(id, runAt, result)
+	}()
+	return RunResult{JobID: job.ID, Status: StatusRunning}, nil
+}
+
+func (s *Service) beginRun(id string) (Job, time.Time, context.Context, error) {
 	s.mu.Lock()
 	if err := s.ensureLoadedLocked(); err != nil {
 		s.mu.Unlock()
-		return RunResult{}, err
+		return Job{}, time.Time{}, nil, err
 	}
 	idx := s.findLocked(id)
 	if idx < 0 {
 		s.mu.Unlock()
-		return RunResult{}, fmt.Errorf("unknown cron job id: %s", id)
+		return Job{}, time.Time{}, nil, fmt.Errorf("unknown cron job id: %s", id)
 	}
 	job := s.jobs[idx]
 	if !job.Enabled {
 		s.mu.Unlock()
-		return RunResult{}, fmt.Errorf("cron job is disabled")
+		return Job{}, time.Time{}, nil, fmt.Errorf("cron job is disabled")
 	}
 	if job.State.RunningAt != nil {
 		s.mu.Unlock()
-		return RunResult{}, fmt.Errorf("cron job is already running")
+		return job, time.Time{}, nil, errJobAlreadyRunning
 	}
 	runAt := s.now().UTC()
 	s.jobs[idx].State.RunningAt = &runAt
 	s.jobs[idx].State.LastStatus = StatusRunning
 	s.jobs[idx].UpdatedAt = runAt
+	var serviceCtx context.Context
+	if s.running {
+		serviceCtx = s.ctx
+	}
 	_ = s.persistLocked()
 	s.mu.Unlock()
+	return job, runAt, serviceCtx, nil
+}
 
-	result := s.execute(ctx, job)
-	s.finishRun(id, runAt, result)
-	return result, nil
+func detachedContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
 }
 
 func (s *Service) ensureLoadedLocked() error {

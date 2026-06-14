@@ -212,7 +212,7 @@ func (s *Service) dispatchCronTool(ctx context.Context, cronCtx cronContext, req
 		if _, err := s.requireCronJobForDelivery(ctx, id, cronCtx.Delivery); err != nil {
 			return nil, err
 		}
-		result, err := s.cron.RunNow(ctx, id)
+		result, err := s.cron.StartNow(ctx, id)
 		if err != nil {
 			return nil, err
 		}
@@ -458,25 +458,12 @@ func sameCronDelivery(a, b channel.DeliveryTarget) bool {
 	if a.Channel != b.Channel || a.ThreadID != b.ThreadID || a.ChatType != b.ChatType {
 		return false
 	}
-	aTarget := normalizeCronDeliveryTarget(a.Target)
-	bTarget := normalizeCronDeliveryTarget(b.Target)
+	aTarget := strings.TrimSpace(a.Target)
+	bTarget := strings.TrimSpace(b.Target)
 	if aTarget != "" && bTarget != "" {
 		return aTarget == bTarget
 	}
 	return a.ChatID == b.ChatID
-}
-
-func normalizeCronDeliveryTarget(raw string) string {
-	value := strings.TrimSpace(raw)
-	base, _, _ := strings.Cut(value, "?")
-	switch {
-	case strings.HasPrefix(base, "group:"):
-		return strings.TrimSpace(strings.TrimPrefix(base, "group:"))
-	case strings.HasPrefix(base, "single:"):
-		return strings.TrimSpace(strings.TrimPrefix(base, "single:"))
-	default:
-		return strings.TrimSpace(base)
-	}
 }
 
 func writeCronToolJSON(w http.ResponseWriter, v any) {

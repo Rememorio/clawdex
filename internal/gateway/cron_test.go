@@ -110,18 +110,18 @@ func TestCronToolAddAndListAreScopedToCurrentChat(t *testing.T) {
 	assert.Empty(t, otherResult.Jobs)
 }
 
-func TestCronToolListMatchesNormalizedNativeTarget(t *testing.T) {
+func TestCronToolDeliveryMatchingRequiresCanonicalTarget(t *testing.T) {
 	svc := newCronTestService(t)
-	legacyToken := svc.newCronContext(channel.Message{
+	canonicalToken := svc.newCronContext(channel.Message{
 		Channel:  "Ardelia",
 		ChatID:   -1,
 		ChatType: "group",
-		Target:   "wrk-chat",
+		Target:   "group:wrk-chat",
 		Text:     "remind me every minute",
 	})
 
 	add := callCronTool(t, svc, map[string]any{
-		"token":  legacyToken,
+		"token":  canonicalToken,
 		"action": "add",
 		"job": map[string]any{
 			"name":     "water",
@@ -131,14 +131,8 @@ func TestCronToolListMatchesNormalizedNativeTarget(t *testing.T) {
 	})
 	require.True(t, add.OK, add.Error)
 
-	currentToken := svc.newCronContext(channel.Message{
-		Channel:  "Ardelia",
-		ChatID:   -2,
-		ChatType: "group",
-		Target:   "group:wrk-chat",
-	})
 	list := callCronTool(t, svc, map[string]any{
-		"token":  currentToken,
+		"token":  canonicalToken,
 		"action": "list",
 	})
 	require.True(t, list.OK, list.Error)
@@ -148,6 +142,23 @@ func TestCronToolListMatchesNormalizedNativeTarget(t *testing.T) {
 	require.NoError(t, json.Unmarshal(list.Result, &listResult))
 	require.Len(t, listResult.Jobs, 1)
 	assert.Equal(t, "water", listResult.Jobs[0].Name)
+
+	legacyToken := svc.newCronContext(channel.Message{
+		Channel:  "Ardelia",
+		ChatID:   -2,
+		ChatType: "group",
+		Target:   "wrk-chat",
+	})
+	legacyList := callCronTool(t, svc, map[string]any{
+		"token":  legacyToken,
+		"action": "list",
+	})
+	require.True(t, legacyList.OK, legacyList.Error)
+	var legacyListResult struct {
+		Jobs []cronjob.Job `json:"jobs"`
+	}
+	require.NoError(t, json.Unmarshal(legacyList.Result, &legacyListResult))
+	assert.Empty(t, legacyListResult.Jobs)
 
 	singleToken := svc.newCronContext(channel.Message{
 		Channel:  "Ardelia",
@@ -163,7 +174,7 @@ func TestCronToolListMatchesNormalizedNativeTarget(t *testing.T) {
 			Channel:  "Ardelia",
 			ChatID:   -4,
 			ChatType: "single",
-			Target:   "T64560027A",
+			Target:   "single:T64560027A",
 		},
 	})
 	require.NoError(t, err)
@@ -184,6 +195,90 @@ func TestCronToolRejectsInvalidToken(t *testing.T) {
 	})
 	assert.False(t, out.OK)
 	assert.Contains(t, out.Error, "invalid or expired")
+}
+
+func TestCronToolRunStartsJobAsynchronously(t *testing.T) {
+	svc := New(&codex.Client{}, 1, "off")
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	started := make(chan struct{}, 1)
+	release := make(chan struct{}, 1)
+	delivered := make(chan string, 1)
+	defer func() {
+		select {
+		case release <- struct{}{}:
+		default:
+		}
+	}()
+	svc.SetCron(cronjob.New(cronjob.Options{
+		Enabled:   true,
+		StorePath: filepath.Join(t.TempDir(), "jobs.json"),
+		Now:       func() time.Time { return now },
+		RunAgent: func(ctx context.Context, job cronjob.Job) (string, error) {
+			started <- struct{}{}
+			<-release
+			return "finished", ctx.Err()
+		},
+		Deliver: func(ctx context.Context, target channel.DeliveryTarget, text string) error {
+			delivered <- text
+			return nil
+		},
+	}))
+
+	msg := channel.Message{
+		Channel:  "Ardelia",
+		ChatID:   -1,
+		ChatType: "single",
+		Target:   "single:T64560027A",
+	}
+	token := svc.newCronContext(msg)
+	job, err := svc.cron.Add(context.Background(), cronjob.CreateJob{
+		Name:     "agent",
+		Schedule: cronjob.Schedule{Kind: cronjob.ScheduleEvery, EverySeconds: 60},
+		Payload:  cronjob.Payload{Kind: cronjob.PayloadAgent, Text: "build a report"},
+		Delivery: deliveryTargetFromMessage(msg),
+		ScopeID:  sessionScopeID(msg),
+	})
+	require.NoError(t, err)
+
+	start := time.Now()
+	run := callCronTool(t, svc, map[string]any{
+		"token":  token,
+		"action": "run",
+		"job_id": job.ID,
+	})
+	require.True(t, run.OK, run.Error)
+	assert.Less(t, time.Since(start), 500*time.Millisecond)
+	var result cronjob.RunResult
+	require.NoError(t, json.Unmarshal(run.Result, &result))
+	assert.Equal(t, job.ID, result.JobID)
+	assert.Equal(t, cronjob.StatusRunning, result.Status)
+
+	again := callCronTool(t, svc, map[string]any{
+		"token":  token,
+		"action": "run",
+		"job_id": job.ID,
+	})
+	require.True(t, again.OK, again.Error)
+	require.NoError(t, json.Unmarshal(again.Result, &result))
+	assert.Equal(t, cronjob.StatusRunning, result.Status)
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("agent did not start")
+	}
+	release <- struct{}{}
+
+	select {
+	case text := <-delivered:
+		assert.Equal(t, "finished", text)
+	case <-time.After(time.Second):
+		t.Fatal("agent result was not delivered")
+	}
+	require.Eventually(t, func() bool {
+		got, ok, err := svc.cron.Get(context.Background(), job.ID)
+		return err == nil && ok && got.State.LastStatus == cronjob.StatusOK && got.State.RunningAt == nil
+	}, time.Second, 10*time.Millisecond)
 }
 
 type testProactiveSender struct {
