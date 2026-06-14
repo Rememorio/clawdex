@@ -153,9 +153,12 @@ The WebSocket connection uses a JSON frame protocol:
 ← aibot_msg_callback    {message JSON}     # inbound user message
 ← aibot_event_callback  {event JSON}       # inbound event (ignored)
 → aibot_respond_msg     {msgtype, markdown/stream}  # reply
+→ aibot_send_msg        {chatid, msgtype, markdown}  # proactive send
 ```
 
 Each frame has a `cmd` field and `headers.req_id`. The `req_id` from an inbound callback **must** be echoed back in the reply frame.
+Proactive sends generate a new local `req_id` and use `aibot_send_msg`, so they
+do not depend on a cached callback `req_id`.
 
 ## Access Control
 

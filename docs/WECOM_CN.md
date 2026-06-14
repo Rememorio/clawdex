@@ -154,9 +154,12 @@ WebSocket 连接使用 JSON 帧协议：
 ← aibot_msg_callback    {message JSON}     # 入站用户消息
 ← aibot_event_callback  {event JSON}       # 入站事件（忽略）
 → aibot_respond_msg     {msgtype, markdown/stream}  # 回复
+→ aibot_send_msg        {chatid, msgtype, markdown}  # 主动发送
 ```
 
 每帧有一个 `cmd` 字段和 `headers.req_id`。入站回调的 `req_id` **必须**在回复帧中回传。
+主动发送会生成新的本地 `req_id` 并使用 `aibot_send_msg`，不依赖缓存的回调
+`req_id`。
 
 ## 访问控制
 

@@ -180,6 +180,13 @@ type wsReplyBody struct {
 	Video        *wsVideoRef      `json:"video,omitempty"`
 }
 
+// wsSendBody is the body of an aibot_send_msg proactive message.
+type wsSendBody struct {
+	ChatID   string      `json:"chatid,omitempty"`
+	MsgType  string      `json:"msgtype"`
+	Markdown *wsMarkdown `json:"markdown,omitempty"`
+}
+
 // templateCard is a WeCom interactive card.
 // CardType "text_notice" provides simple jump buttons (JumpList, max 3).
 // CardType "button_interaction" provides rich buttons (ButtonList, max 6)

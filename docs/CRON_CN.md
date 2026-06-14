@@ -105,9 +105,9 @@ clawdex config set cron.mcp_enabled true
 | Weixin | 发送到原用户 |
 | QQ Bot | 发送到原 C2C 或群 openid |
 | Feishu | 发送到原 chat |
-| WeCom | 基于近期入站聊天缓存响应通道的 best-effort 投递 |
+| WeCom | WebSocket 智能机器人通过 `aibot_send_msg` 主动投递；webhook 模式使用缓存响应通道 |
 
-WeCom 机器人 API 的主动投递限制比其他渠道更多。如果平台不再接受缓存响应通道，定时任务投递可能失败，任务的 last error 会记录失败原因。
+WeCom webhook 机器人 API 的主动投递限制比 WebSocket 智能机器人更多。如果平台不再接受缓存响应通道，定时任务投递可能失败，任务的 last error 会记录失败原因。
 
 ## 排查问题
 
@@ -127,4 +127,4 @@ WeCom 机器人 API 的主动投递限制比其他渠道更多。如果平台不
 
 - 用 `/cron status <id>` 查看 last error。
 - 确认原渠道实例仍然启用。
-- 对 WeCom，如果缓存响应通道过期，先在原聊天发送一条新消息，再重试任务。
+- 对 WeCom webhook 模式，如果缓存响应通道过期，先在原聊天发送一条新消息，再重试任务。WebSocket 模式需要机器人长连接在线才能主动投递。

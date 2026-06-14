@@ -19,6 +19,7 @@ const (
 	wsCommandSubscribe         = "aibot_subscribe"
 	wsCommandPing              = "ping"
 	wsCommandRespond           = "aibot_respond_msg"
+	wsCommandSend              = "aibot_send_msg"
 	wsCommandRespondUpdate     = "aibot_respond_update_msg"
 	wsCommandRespondWelcome    = "aibot_respond_welcome_msg"
 	wsCommandUploadMediaInit   = "aibot_upload_media_init"
