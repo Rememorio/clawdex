@@ -326,11 +326,13 @@ func (d *Driver) dispatchWSMessage(ctx context.Context, session *wsSession, msg 
 	}
 	logger.Debug("wecom dispatch [ws]", "channel", d.name, "type", msg.MsgType, "text", text, "images", len(imageURLs))
 
-	hashedChat := hashChatID(d.name, msg.ChatID)
+	hashedChat := hashChatID(d.name, wsMessageChatKey(msg))
 	hashedSender := hashUserID(msg.From.UserID)
 
-	// Store the chatID mapping early (needed even before coalescing).
-	d.chatIDMap.Store(hashedChat, msg.ChatID)
+	// Store the native delivery target early (needed even before coalescing).
+	if target := wsMessageDeliveryTarget(msg); target != "" {
+		d.chatIDMap.Store(hashedChat, target)
+	}
 
 	// Access control.
 	if msg.ChatType == "group" {
@@ -556,9 +558,11 @@ func (d *Driver) dispatchTemplateCardEvent(ctx context.Context, _ *wsSession, ms
 		"from", msg.From.UserID,
 		"chat", msg.ChatID)
 
-	hashedChat := hashChatID(d.name, msg.ChatID)
+	hashedChat := hashChatID(d.name, wsMessageChatKey(msg))
 	hashedSender := hashUserID(msg.From.UserID)
-	d.chatIDMap.Store(hashedChat, msg.ChatID)
+	if target := wsMessageDeliveryTarget(msg); target != "" {
+		d.chatIDMap.Store(hashedChat, target)
+	}
 	d.callbackReqIDs.Store(hashedChat, reqID)
 
 	// Use the CardEventHandler to process the event synchronously.
@@ -634,9 +638,11 @@ func (d *Driver) dispatchEnterChatEvent(ctx context.Context, _ *wsSession, msg w
 		return
 	}
 
-	hashedChat := hashChatID(d.name, msg.ChatID)
+	hashedChat := hashChatID(d.name, wsMessageChatKey(msg))
 	hashedSender := hashUserID(msg.From.UserID)
-	d.chatIDMap.Store(hashedChat, msg.ChatID)
+	if target := wsMessageDeliveryTarget(msg); target != "" {
+		d.chatIDMap.Store(hashedChat, target)
+	}
 	d.callbackReqIDs.Store(hashedChat, reqID)
 
 	senderName := wecomSenderName(msg.From.Name, msg.From.Alias, msg.From.UserID)
@@ -726,6 +732,44 @@ func (d *Driver) buildChannelMessage(
 		Text:       text,
 		MediaPaths: mediaPaths,
 	}
+}
+
+func wsMessageChatKey(msg wsMessage) string {
+	chatType := strings.TrimSpace(msg.ChatType)
+	chatID := strings.TrimSpace(msg.ChatID)
+	userID := strings.TrimSpace(msg.From.UserID)
+	if chatType == "group" && chatID != "" {
+		return chatID
+	}
+	if userID != "" && (chatType == "single" || chatID == "") {
+		return "single:" + userID
+	}
+	if chatID != "" {
+		return chatID
+	}
+	if userID != "" {
+		return "single:" + userID
+	}
+	return ""
+}
+
+func wsMessageDeliveryTarget(msg wsMessage) string {
+	chatType := strings.TrimSpace(msg.ChatType)
+	chatID := strings.TrimSpace(msg.ChatID)
+	userID := strings.TrimSpace(msg.From.UserID)
+	if chatType == "group" && chatID != "" {
+		return "group:" + chatID
+	}
+	if userID != "" && (chatType == "single" || chatID == "") {
+		return "single:" + userID
+	}
+	if chatID != "" {
+		return "group:" + chatID
+	}
+	if userID != "" {
+		return "single:" + userID
+	}
+	return ""
 }
 
 // Config helper methods.

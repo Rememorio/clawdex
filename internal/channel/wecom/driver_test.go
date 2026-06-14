@@ -1572,7 +1572,7 @@ func TestDispatchTemplateCardEvent_Status(t *testing.T) {
 	d.cardHandler = h
 
 	msg := wsMessage{
-		ChatID: "chat1", MsgType: "event",
+		ChatID: "chat1", ChatType: "group", MsgType: "event",
 		From: wsFrom{UserID: "user1"},
 		Event: wsEventContent{
 			EventType:         "template_card_event",
@@ -1611,7 +1611,7 @@ func TestDispatchTemplateCardEvent_PreservesTaskID(t *testing.T) {
 	d.cardHandler = h
 
 	msg := wsMessage{
-		ChatID: "chat1", MsgType: "event",
+		ChatID: "chat1", ChatType: "group", MsgType: "event",
 		From: wsFrom{UserID: "user1"},
 		Event: wsEventContent{
 			EventType: "template_card_event",
@@ -1645,7 +1645,7 @@ func TestDispatchTemplateCardEvent_New(t *testing.T) {
 	d.cardHandler = h
 
 	msg := wsMessage{
-		ChatID: "chat1", MsgType: "event",
+		ChatID: "chat1", ChatType: "group", MsgType: "event",
 		From: wsFrom{UserID: "user1"},
 		Event: wsEventContent{
 			EventType:         "template_card_event",
@@ -1777,7 +1777,7 @@ func TestDispatchTemplateCardEvent_StoresReqID(t *testing.T) {
 	chatID := hashChatID("wecom", "chat1")
 
 	msg := wsMessage{
-		ChatID: "chat1", MsgType: "event",
+		ChatID: "chat1", ChatType: "group", MsgType: "event",
 		From: wsFrom{UserID: "user1"},
 		Event: wsEventContent{
 			EventType:         "template_card_event",
@@ -2701,6 +2701,45 @@ func TestSendText_WebSocketUsesProactiveSendWithoutCallbackReqID(t *testing.T) {
 	assert.Equal(t, "cron result", body.Markdown.Content)
 }
 
+func TestSendText_WebSocketUsesSingleProactiveTarget(t *testing.T) {
+	frames, wsURL, shutdown := startWeComWebSocketTestServer(t)
+	defer shutdown()
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	d := New(Config{ConnectionMode: "websocket"}, nil)
+	session := newWSSession(conn)
+	d.wsSession = session
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = d.readWSFrames(ctx, session)
+	}()
+
+	err = d.SendText(
+		context.Background(),
+		channel.DeliveryTarget{
+			Channel:  "wecom",
+			ChatType: "single",
+			Target:   "single:user-1",
+		},
+		"dm cron result",
+	)
+	require.NoError(t, err)
+
+	frame := mustReceiveWSFrame(t, frames)
+	assert.Equal(t, wsCommandSend, frame.Command)
+
+	var body wsSendBody
+	require.NoError(t, json.Unmarshal(frame.Body, &body))
+	assert.Equal(t, "user-1", body.ChatID)
+	require.NotNil(t, body.Markdown)
+	assert.Equal(t, "dm cron result", body.Markdown.Content)
+}
+
 func TestSendText_WebSocketFallsBackToCachedNativeChatID(t *testing.T) {
 	frames, wsURL, shutdown := startWeComWebSocketTestServer(t)
 	defer shutdown()
@@ -2733,6 +2772,39 @@ func TestSendText_WebSocketFallsBackToCachedNativeChatID(t *testing.T) {
 	var body wsSendBody
 	require.NoError(t, json.Unmarshal(frame.Body, &body))
 	assert.Equal(t, "cached-chat-99", body.ChatID)
+}
+
+func TestSendText_WebSocketFallsBackToCachedSingleTarget(t *testing.T) {
+	frames, wsURL, shutdown := startWeComWebSocketTestServer(t)
+	defer shutdown()
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	d := New(Config{ConnectionMode: "websocket"}, nil)
+	session := newWSSession(conn)
+	d.wsSession = session
+	d.chatIDMap.Store(int64(99), "single:user-99")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = d.readWSFrames(ctx, session)
+	}()
+
+	err = d.SendText(
+		context.Background(),
+		channel.DeliveryTarget{Channel: "wecom", ChatID: 99},
+		"hello",
+	)
+	require.NoError(t, err)
+
+	frame := mustReceiveWSFrame(t, frames)
+
+	var body wsSendBody
+	require.NoError(t, json.Unmarshal(frame.Body, &body))
+	assert.Equal(t, "user-99", body.ChatID)
 }
 
 func TestSendText_WebSocketMissingNativeChatID(t *testing.T) {
@@ -3106,6 +3178,8 @@ func TestDispatchWSMessage_TextAllowed(t *testing.T) {
 	msgs := h.messages()
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "ws direct msg", msgs[0].Text)
+	assert.Equal(t, hashChatID("wecom", "single:user-ws"), msgs[0].ChatID)
+	assert.Equal(t, "single:user-ws", msgs[0].Target)
 }
 
 func TestDispatchWSMessage_GroupStripsAt(t *testing.T) {
@@ -3128,6 +3202,58 @@ func TestDispatchWSMessage_GroupStripsAt(t *testing.T) {
 	msgs := h.messages()
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "what is go?", msgs[0].Text)
+	assert.Equal(t, hashChatID("wecom", "ws-grp-1"), msgs[0].ChatID)
+	assert.Equal(t, "group:ws-grp-1", msgs[0].Target)
+}
+
+func TestWSMessageDeliveryTarget(t *testing.T) {
+	tests := []struct {
+		name    string
+		msg     wsMessage
+		wantKey string
+		want    string
+	}{
+		{
+			name: "group",
+			msg: wsMessage{
+				ChatID:   "chat-1",
+				ChatType: "group",
+				From:     wsFrom{UserID: "user-1"},
+			},
+			wantKey: "chat-1",
+			want:    "group:chat-1",
+		},
+		{
+			name: "single",
+			msg: wsMessage{
+				From: wsFrom{UserID: "user-1"},
+			},
+			wantKey: "single:user-1",
+			want:    "single:user-1",
+		},
+		{
+			name: "chat id without chat type",
+			msg: wsMessage{
+				ChatID: "chat-1",
+				From:   wsFrom{UserID: "user-1"},
+			},
+			wantKey: "chat-1",
+			want:    "group:chat-1",
+		},
+		{
+			name:    "missing",
+			msg:     wsMessage{},
+			wantKey: "",
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.wantKey, wsMessageChatKey(tt.msg))
+			assert.Equal(t, tt.want, wsMessageDeliveryTarget(tt.msg))
+		})
+	}
 }
 
 func TestDispatchWSMessage_EmptyText(t *testing.T) {

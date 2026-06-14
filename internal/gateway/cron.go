@@ -455,11 +455,28 @@ func filterCronJobsForDelivery(jobs []cronjob.Job, delivery channel.DeliveryTarg
 }
 
 func sameCronDelivery(a, b channel.DeliveryTarget) bool {
-	return a.Channel == b.Channel &&
-		a.ChatID == b.ChatID &&
-		a.ThreadID == b.ThreadID &&
-		a.ChatType == b.ChatType &&
-		strings.TrimSpace(a.Target) == strings.TrimSpace(b.Target)
+	if a.Channel != b.Channel || a.ThreadID != b.ThreadID || a.ChatType != b.ChatType {
+		return false
+	}
+	aTarget := normalizeCronDeliveryTarget(a.Target)
+	bTarget := normalizeCronDeliveryTarget(b.Target)
+	if aTarget != "" && bTarget != "" {
+		return aTarget == bTarget
+	}
+	return a.ChatID == b.ChatID
+}
+
+func normalizeCronDeliveryTarget(raw string) string {
+	value := strings.TrimSpace(raw)
+	base, _, _ := strings.Cut(value, "?")
+	switch {
+	case strings.HasPrefix(base, "group:"):
+		return strings.TrimSpace(strings.TrimPrefix(base, "group:"))
+	case strings.HasPrefix(base, "single:"):
+		return strings.TrimSpace(strings.TrimPrefix(base, "single:"))
+	default:
+		return strings.TrimSpace(base)
+	}
 }
 
 func writeCronToolJSON(w http.ResponseWriter, v any) {

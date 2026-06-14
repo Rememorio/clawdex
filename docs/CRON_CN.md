@@ -105,7 +105,7 @@ clawdex config set cron.mcp_enabled true
 | Weixin | 发送到原用户 |
 | QQ Bot | 发送到原 C2C 或群 openid |
 | Feishu | 发送到原 chat |
-| WeCom | WebSocket 智能机器人通过 `aibot_send_msg` 主动投递；webhook 模式使用缓存响应通道 |
+| WeCom | WebSocket 智能机器人通过 `aibot_send_msg` 主动投递 `group:<chatid>` 和 `single:<userid>` 目标；webhook 模式使用缓存响应通道 |
 
 WeCom webhook 机器人 API 的主动投递限制比 WebSocket 智能机器人更多。如果平台不再接受缓存响应通道，定时任务投递可能失败，任务的 last error 会记录失败原因。
 
