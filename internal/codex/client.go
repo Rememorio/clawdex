@@ -249,6 +249,8 @@ func (c *Client) appendCronMCPArgs(args []string, opts RunOptions) []string {
 		"-c", "mcp_servers.clawdex_cron.command="+strconv.Quote(command),
 		"-c", "mcp_servers.clawdex_cron.args="+tomlStringArray(mcpArgs),
 		"-c", fmt.Sprintf("mcp_servers.clawdex_cron.startup_timeout_sec=%d", cronMCPStartupTimeoutSec),
+		"-c", "mcp_servers.clawdex_cron.default_tools_approval_mode=\"approve\"",
+		"-c", "mcp_servers.clawdex_cron.tools.cron.approval_mode=\"approve\"",
 	)
 	if c.GatewayURL != "" {
 		args = append(args, "-c", "mcp_servers.clawdex_cron.env.CLAWDEX_GATEWAY_URL="+strconv.Quote(c.GatewayURL))
