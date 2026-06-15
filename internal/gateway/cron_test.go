@@ -110,6 +110,75 @@ func TestCronToolAddAndListAreScopedToCurrentChat(t *testing.T) {
 	assert.Empty(t, otherResult.Jobs)
 }
 
+func TestCronToolRejectsControlOnlyCreatePayload(t *testing.T) {
+	svc := newCronTestService(t)
+	token := svc.newCronContext(channel.Message{
+		Channel: "wecom",
+		ChatID:  42,
+		Target:  "single:T64560027A",
+		Text:    "create and run now",
+	})
+
+	add := callCronTool(t, svc, map[string]any{
+		"token":  token,
+		"action": "add",
+		"job": map[string]any{
+			"name":     "bad",
+			"schedule": map[string]any{"kind": "cron", "expr": "0 10 * * *"},
+			"payload":  map[string]any{"kind": "agent", "text": "吧，然后现在就触发一次"},
+		},
+	})
+
+	assert.False(t, add.OK)
+	assert.Contains(t, add.Error, "payload text")
+
+	list := callCronTool(t, svc, map[string]any{
+		"token":  token,
+		"action": "list",
+	})
+	require.True(t, list.OK, list.Error)
+	var listResult struct {
+		Jobs []cronjob.Job `json:"jobs"`
+	}
+	require.NoError(t, json.Unmarshal(list.Result, &listResult))
+	assert.Empty(t, listResult.Jobs)
+}
+
+func TestCronToolRejectsControlOnlyPatchPayload(t *testing.T) {
+	svc := newCronTestService(t)
+	msg := channel.Message{
+		Channel: "wecom",
+		ChatID:  42,
+		Target:  "single:T64560027A",
+	}
+	token := svc.newCronContext(msg)
+	job, err := svc.cron.Add(context.Background(), cronjob.CreateJob{
+		Name:     "ok",
+		Schedule: cronjob.Schedule{Kind: cronjob.ScheduleEvery, EverySeconds: 60},
+		Payload:  cronjob.Payload{Kind: cronjob.PayloadMessage, Text: "drink water"},
+		Delivery: deliveryTargetFromMessage(msg),
+		ScopeID:  sessionScopeID(msg),
+	})
+	require.NoError(t, err)
+
+	update := callCronTool(t, svc, map[string]any{
+		"token":  token,
+		"action": "update",
+		"id":     job.ID,
+		"patch": map[string]any{
+			"payload": map[string]any{"kind": "message", "text": "的定时任务，然后现在触发一次"},
+		},
+	})
+
+	assert.False(t, update.OK)
+	assert.Contains(t, update.Error, "payload text")
+
+	got, ok, err := svc.cron.Get(context.Background(), job.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "drink water", got.Payload.Text)
+}
+
 func TestCronToolDeliveryMatchingRequiresCanonicalTarget(t *testing.T) {
 	svc := newCronTestService(t)
 	canonicalToken := svc.newCronContext(channel.Message{

@@ -1662,6 +1662,53 @@ func TestCronCommandDoesNotWaitForChatLock(t *testing.T) {
 	assert.Empty(t, resp.typings)
 }
 
+func TestNaturalCronRequestGoesThroughCodex(t *testing.T) {
+	binDir := t.TempDir()
+	script := filepath.Join(binDir, "codex")
+	scriptContent := `#!/bin/sh
+echo '{"type":"thread.started","thread_id":"sess-natural-cron"}'
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"model handled cron request"}}'
+`
+	require.NoError(t, os.WriteFile(script, []byte(scriptContent), 0o755))
+
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	cronSvc := cronjob.New(cronjob.Options{
+		Enabled:   true,
+		StorePath: filepath.Join(t.TempDir(), "jobs.json"),
+		Now:       func() time.Time { return now },
+	})
+	svc := New(&codex.Client{
+		WorkDir:    t.TempDir(),
+		Timeout:    5 * time.Second,
+		Store:      codex.NewSessionStore(filepath.Join(t.TempDir(), "sessions.json")),
+		Executable: script,
+	}, 1, "off")
+	svc.SetCron(cronSvc)
+
+	resp := &mockResponder{}
+	msg := channel.Message{
+		Channel:   "wecom",
+		ChatID:    42,
+		Target:    "group:42",
+		ChatType:  "group",
+		SenderID:  7,
+		MessageID: 100,
+		Text:      "5 分钟后提醒我去喝水",
+	}
+
+	svc.processJob(context.Background(), job{msg: msg, responder: resp})
+
+	resp.mu.Lock()
+	require.Len(t, resp.replies, 1)
+	assert.Equal(t, "model handled cron request", resp.replies[0].Text)
+	require.Len(t, resp.typings, 1)
+	resp.mu.Unlock()
+
+	jobs, err := cronSvc.List(context.Background(), true)
+	require.NoError(t, err)
+	assert.Empty(t, jobs, "gateway must not create natural-language cron jobs without Codex")
+}
+
 func TestCancel_CancelsRunningJob(t *testing.T) {
 	binDir := t.TempDir()
 	script := filepath.Join(binDir, "codex")

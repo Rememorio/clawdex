@@ -55,7 +55,8 @@ func TestCodexPrompt_PrivateChatPlainTextWhenNoSender(t *testing.T) {
 
 	prompt := codexPrompt(msg)
 	assert.Contains(t, prompt, "[Current turn time: ")
-	assert.Contains(t, prompt, "[Cron authoring: ")
+	assert.Contains(t, prompt, "[Cron tool: ")
+	assert.Contains(t, prompt, "Never answer scheduled-job state from chat history or memory")
 	assert.True(t, strings.HasSuffix(prompt, "\nhello"))
 }
 

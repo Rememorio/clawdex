@@ -30,7 +30,7 @@ func cronUsageText() string {
 func appendCronHelpSection(b *strings.Builder) {
 	b.WriteString("\nScheduled jobs:\n")
 	appendCronCommands(b)
-	b.WriteString("  Natural language with a concrete time can create jobs.\n")
+	b.WriteString("  Natural language requests are handled by the assistant through the cron tool.\n")
 }
 
 func appendCronCommands(b *strings.Builder) {

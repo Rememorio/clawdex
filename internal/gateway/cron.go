@@ -177,6 +177,9 @@ func (s *Service) dispatchCronTool(ctx context.Context, cronCtx cronContext, req
 		if input.Enabled == nil {
 			input.Enabled = req.Enabled
 		}
+		if err := validateCronPayload(input.Payload); err != nil {
+			return nil, err
+		}
 		job, err := s.cron.Add(ctx, input)
 		if err != nil {
 			return nil, err
@@ -186,6 +189,11 @@ func (s *Service) dispatchCronTool(ctx context.Context, cronCtx cronContext, req
 		id := cronRequestID(req)
 		if _, err := s.requireCronJobForDelivery(ctx, id, cronCtx.Delivery); err != nil {
 			return nil, err
+		}
+		if req.Patch.Payload != nil {
+			if err := validateCronPayload(*req.Patch.Payload); err != nil {
+				return nil, err
+			}
 		}
 		job, err := s.cron.Update(ctx, id, cronjob.PatchJob{
 			Name:     req.Patch.Name,
@@ -433,6 +441,78 @@ func cronRequestID(req cronToolRequest) string {
 		return strings.TrimSpace(req.JobID)
 	}
 	return strings.TrimSpace(req.ID)
+}
+
+func validateCronPayload(payload cronjob.Payload) error {
+	if strings.TrimSpace(payload.Text) == "" {
+		return fmt.Errorf("scheduled job payload text is required")
+	}
+	if isCronControlResidue(payload.Text) {
+		return fmt.Errorf("scheduled job payload text is only scheduling control text; use the user's actual reminder text or prior conversation context")
+	}
+	return nil
+}
+
+func isCronControlResidue(text string) bool {
+	remaining := compactCronPayloadText(text)
+	if remaining == "" {
+		return true
+	}
+	for _, marker := range cronPayloadControlMarkers {
+		remaining = strings.ReplaceAll(remaining, marker, "")
+	}
+	return remaining == ""
+}
+
+var cronPayloadControlMarkers = []string{
+	"触发一次",
+	"触发一下",
+	"触发下",
+	"执行一次",
+	"执行一下",
+	"执行下",
+	"运行一次",
+	"运行一下",
+	"运行下",
+	"现在",
+	"立即",
+	"马上",
+	"立刻",
+	"然后",
+	"先",
+	"就",
+	"吧",
+	"的",
+	"创建",
+	"定时任务",
+}
+
+func compactCronPayloadText(text string) string {
+	replacer := strings.NewReplacer(
+		" ", "",
+		"\t", "",
+		"\n", "",
+		"\r", "",
+		"，", "",
+		",", "",
+		"。", "",
+		".", "",
+		"：", "",
+		":", "",
+		"；", "",
+		";", "",
+		"！", "",
+		"!", "",
+		"？", "",
+		"?", "",
+		"、", "",
+		"“", "",
+		"”", "",
+		"\"", "",
+		"'", "",
+		"`", "",
+	)
+	return replacer.Replace(strings.TrimSpace(text))
 }
 
 func firstNonEmpty(values ...string) string {
