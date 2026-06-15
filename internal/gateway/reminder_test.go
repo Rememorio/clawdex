@@ -61,6 +61,41 @@ func TestParseNaturalCronRequestDailyTask(t *testing.T) {
 	assert.Equal(t, "做报告", req.Payload.Text)
 }
 
+func TestParseNaturalCronRequestDailyTaskAfterMarker(t *testing.T) {
+	loc := time.FixedZone("CST", 8*3600)
+	now := time.Date(2026, 6, 12, 11, 0, 0, 0, loc)
+
+	req, intent, err := parseNaturalCronRequest(now, "请帮我每日10点的定时任务：做报告")
+
+	require.NoError(t, err)
+	assert.True(t, intent)
+	assert.Equal(t, "0 10 * * *", req.Schedule.Expr)
+	assert.Equal(t, cronjob.PayloadAgent, req.Payload.Kind)
+	assert.Equal(t, "做报告", req.Payload.Text)
+}
+
+func TestParseNaturalCronRequestContextualDailyTaskDefersToAgent(t *testing.T) {
+	loc := time.FixedZone("CST", 8*3600)
+	now := time.Date(2026, 6, 12, 11, 0, 0, 0, loc)
+
+	req, intent, err := parseNaturalCronRequest(now, "可以，你按这个创建每日10 点的定时任务，然后现在触发一次")
+
+	require.NoError(t, err)
+	assert.False(t, intent)
+	assert.Empty(t, req.Payload.Text)
+}
+
+func TestParseNaturalCronRequestImmediateRunDefersToAgent(t *testing.T) {
+	loc := time.FixedZone("CST", 8*3600)
+	now := time.Date(2026, 6, 12, 11, 0, 0, 0, loc)
+
+	req, intent, err := parseNaturalCronRequest(now, "每天10点执行做报告，然后现在触发一次")
+
+	require.NoError(t, err)
+	assert.False(t, intent)
+	assert.Empty(t, req.Payload.Text)
+}
+
 func TestParseNaturalCronRequestUnsupportedIntent(t *testing.T) {
 	now := time.Date(2026, 6, 12, 11, 0, 0, 0, time.Local)
 

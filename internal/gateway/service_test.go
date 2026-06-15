@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1538,6 +1539,52 @@ echo '{"type":"turn.completed","usage":{"input_tokens":100}}'
 	resp.mockStreamResponder.mu.Unlock()
 	assert.Empty(t, replies,
 		"Reply should not be called when FinishStream succeeded (would cause duplicate)")
+}
+
+func TestRunEditStreaming_StreamFinisherLongOutputDoesNotReplyTail(t *testing.T) {
+	binDir := t.TempDir()
+	script := filepath.Join(binDir, "codex")
+	eventsPath := filepath.Join(binDir, "events.jsonl")
+	longText := strings.TrimSpace(strings.Repeat("long output ", 600))
+	require.Greater(t, len([]rune(longText)), streamingTextLimit)
+
+	events := `{"type":"thread.started","thread_id":"sess-long"}` + "\n" +
+		`{"type":"item.completed","item":{"type":"agent_message","text":"` + longText + `"}}` + "\n" +
+		`{"type":"turn.completed","usage":{"input_tokens":100}}` + "\n"
+	require.NoError(t, os.WriteFile(eventsPath, []byte(events), 0o644))
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\ncat "+strconv.Quote(eventsPath)+"\n"), 0o755))
+
+	resp := &mockStreamFinisherResponder{}
+	driver := &mockDriver{
+		name: "test",
+		startFn: func(ctx context.Context, h channel.Handler) error {
+			h.Handle(ctx, channel.Message{
+				Channel: "wecom", ChatID: 1, MessageID: 1, Text: "produce a long answer",
+			}, resp)
+			time.Sleep(500 * time.Millisecond)
+			return nil
+		},
+	}
+
+	svc := New(&codex.Client{
+		WorkDir:    t.TempDir(),
+		Timeout:    5 * time.Second,
+		Executable: script,
+	}, 1, "partial")
+
+	err := svc.Run(context.Background(), driver)
+	assert.NoError(t, err)
+
+	resp.mu.Lock()
+	finishCalls := append([]finishRecord(nil), resp.finishCalls...)
+	resp.mu.Unlock()
+	require.Len(t, finishCalls, 1)
+	assert.Equal(t, longText, finishCalls[0].Text)
+
+	resp.mockStreamResponder.mu.Lock()
+	replies := append([]replyRecord(nil), resp.mockStreamResponder.mockResponder.replies...)
+	resp.mockStreamResponder.mu.Unlock()
+	assert.Empty(t, replies, "long stream output should not be replayed as tail chunks")
 }
 
 // ── Feature: /cancel ──
