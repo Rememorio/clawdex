@@ -784,6 +784,17 @@ func (s *Service) runEditStreaming(ctx context.Context, j job, sr channel.Stream
 			return
 		}
 
+		if sf, ok := sr.(channel.StreamFinisher); ok {
+			finishText := s.resolveFinishText(out, paths)
+			if err := sf.FinishStream(ctx, j.msg.ChatID, finishText); err != nil {
+				logger.Warn("finish stream failed", "chat", j.msg.ChatID, "error", err)
+				s.replyWithMediaDetection(ctx, j, out)
+				return
+			}
+			s.sendMediaIfPresent(ctx, j, out)
+			return
+		}
+
 		chunks := splitByRuneLimit(out, streamingTextLimit)
 		if len(chunks) == 1 {
 			if out != lastText {
@@ -800,13 +811,6 @@ func (s *Service) runEditStreaming(ctx context.Context, j job, sr channel.Stream
 				if err := sr.Reply(ctx, j.msg, chunk); err != nil {
 					logger.Warn("reply chunk failed", "chat", j.msg.ChatID, "error", err)
 				}
-			}
-		}
-		// Signal stream end for drivers that need it (e.g. WeCom WebSocket).
-		if sf, ok := sr.(channel.StreamFinisher); ok {
-			finishText := s.resolveFinishText(out, paths)
-			if err := sf.FinishStream(ctx, j.msg.ChatID, finishText); err != nil {
-				logger.Warn("finish stream failed", "chat", j.msg.ChatID, "error", err)
 			}
 		}
 		// Send media if detected.

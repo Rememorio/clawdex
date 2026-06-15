@@ -58,6 +58,9 @@ func parseNaturalCronRequest(now time.Time, text string) (naturalCronRequest, bo
 	if text == "" {
 		return naturalCronRequest{}, false, nil
 	}
+	if shouldDeferNaturalCronToAgent(text) {
+		return naturalCronRequest{}, false, nil
+	}
 	if match := relativeReminderPattern.FindStringSubmatch(text); match != nil {
 		return parseRelativeReminder(now, match)
 	}
@@ -219,6 +222,69 @@ func hasSchedulingCreateIntent(text string) bool {
 		strings.Contains(text, "运行")
 }
 
+func shouldDeferNaturalCronToAgent(text string) bool {
+	if !hasSchedulingCreateIntent(text) {
+		return false
+	}
+	if hasImmediateRunIntent(text) {
+		return true
+	}
+	lower := strings.ToLower(text)
+	for _, marker := range []string{
+		"按这个",
+		"用这个",
+		"把这个",
+		"这个创建",
+		"这个定时",
+		"这个 prompt",
+		"这个prompt",
+		"这段内容",
+		"这条消息",
+		"这份 prompt",
+		"这份prompt",
+		"上面",
+		"上述",
+		"以上",
+		"前面",
+		"前文",
+		"前面的",
+		"前一条",
+		"上一条",
+		"刚才",
+		"之前整理",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasImmediateRunIntent(text string) bool {
+	for _, marker := range []string{
+		"现在触发一次",
+		"立即触发一次",
+		"马上触发一次",
+		"立刻触发一次",
+		"现在执行一次",
+		"立即执行一次",
+		"马上执行一次",
+		"立刻执行一次",
+		"现在运行一次",
+		"立即运行一次",
+		"马上运行一次",
+		"立刻运行一次",
+		"先触发一次",
+		"先执行一次",
+		"先运行一次",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func dailyMatchHasAction(body string) bool {
 	return strings.Contains(body, "提醒") ||
 		strings.Contains(body, "定时任务") ||
@@ -249,7 +315,19 @@ func reminderTextAfterMarker(text string) string {
 }
 
 func taskTextAfterMarker(text string) string {
-	for _, marker := range []string{"执行以下定时任务", "执行定时任务", "执行以下任务", "执行", "运行"} {
+	for _, marker := range []string{
+		"执行以下定时任务",
+		"执行定时任务",
+		"执行以下任务",
+		"运行以下定时任务",
+		"运行定时任务",
+		"运行以下任务",
+		"执行",
+		"运行",
+		"以下定时任务",
+		"定时任务",
+		"以下任务",
+	} {
 		if _, after, ok := strings.Cut(text, marker); ok {
 			return cleanReminderPayload(after)
 		}
