@@ -224,6 +224,11 @@ func (c *Client) executableName() string {
 	return codexExecutableName
 }
 
+func execArgs(args ...string) []string {
+	base := []string{"--ask-for-approval", "never", "exec"}
+	return append(base, args...)
+}
+
 func (c *Client) appendCronMCPArgs(args []string, opts RunOptions) []string {
 	if !c.CronMCPEnabled || opts.DisableCronMCP {
 		return args
@@ -375,6 +380,15 @@ func traceArgs(base []any, extra ...any) []any {
 }
 
 func traceCommandName(args []string) string {
+	for i, arg := range args {
+		if arg != "exec" {
+			continue
+		}
+		if len(args) > i+1 && args[i+1] == "resume" {
+			return "exec resume"
+		}
+		return "exec"
+	}
 	switch {
 	case len(args) >= 2:
 		return args[0] + " " + args[1]
@@ -497,7 +511,7 @@ func (c *Client) RunStreamWithOptions(parent context.Context, chatID int64, prom
 }
 
 func (c *Client) execFreshStream(ctx context.Context, chatID int64, lastMsgPath, prompt string, imagePaths []string, onChunk StreamCallback, opts RunOptions) string {
-	args := []string{"exec", "--json", "--skip-git-repo-check", "-C", c.WorkDir, "-o", lastMsgPath}
+	args := execArgs("--json", "--skip-git-repo-check", "-C", c.WorkDir, "-o", lastMsgPath)
 	if opts.Sandbox != "" {
 		args = append(args, "--sandbox", opts.Sandbox)
 	}
@@ -533,7 +547,7 @@ func (c *Client) execFreshStream(ctx context.Context, chatID int64, lastMsgPath,
 }
 
 func (c *Client) execResumeStream(ctx context.Context, sessionID, lastMsgPath, prompt string, imagePaths []string, onChunk StreamCallback, opts RunOptions) string {
-	args := []string{"exec", "resume", "--json", "--skip-git-repo-check", "-o", lastMsgPath}
+	args := execArgs("resume", "--json", "--skip-git-repo-check", "-o", lastMsgPath)
 	args = append(args, resumeSandboxArgs(opts.Sandbox)...)
 	args = c.appendCronMCPArgs(args, opts)
 	args = append(args, sessionID, prompt)
@@ -687,7 +701,7 @@ func (c *Client) RunWithOptions(parent context.Context, chatID int64, prompt str
 
 // execFresh runs a new `codex exec --json` invocation and stores the session ID.
 func (c *Client) execFresh(ctx context.Context, chatID int64, lastMsgPath, prompt string, imagePaths []string, opts RunOptions) string {
-	args := []string{"exec", "--json", "--skip-git-repo-check", "-C", c.WorkDir, "-o", lastMsgPath}
+	args := execArgs("--json", "--skip-git-repo-check", "-C", c.WorkDir, "-o", lastMsgPath)
 	if opts.Sandbox != "" {
 		args = append(args, "--sandbox", opts.Sandbox)
 	}
@@ -730,7 +744,7 @@ func (c *Client) execFresh(ctx context.Context, chatID int64, lastMsgPath, promp
 // execResume runs `codex exec resume --json <sessionID> <prompt>`.
 // Returns the response text, or "" if the resume failed.
 func (c *Client) execResume(ctx context.Context, sessionID, lastMsgPath, prompt string, imagePaths []string, opts RunOptions) string {
-	args := []string{"exec", "resume", "--json", "--skip-git-repo-check", "-o", lastMsgPath}
+	args := execArgs("resume", "--json", "--skip-git-repo-check", "-o", lastMsgPath)
 	args = append(args, resumeSandboxArgs(opts.Sandbox)...)
 	args = c.appendCronMCPArgs(args, opts)
 	// Positional args (sessionID, prompt) must come before --image.

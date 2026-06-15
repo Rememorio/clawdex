@@ -511,8 +511,16 @@ func TestRun_GroupMessagesUseSeparateSessionsPerSender(t *testing.T) {
 	script := filepath.Join(binDir, "codex")
 	logFile := filepath.Join(t.TempDir(), "mode.log")
 	scriptContent := "#!/bin/sh\n" +
-		"echo \"$1 $2\" >> " + logFile + "\n" +
-		"if [ \"$2\" = \"resume\" ]; then\n" +
+		"mode=fresh\n" +
+		"prev=\n" +
+		"for arg in \"$@\"; do\n" +
+		"  if [ \"$prev\" = \"exec\" ] && [ \"$arg\" = \"resume\" ]; then\n" +
+		"    mode=resume\n" +
+		"  fi\n" +
+		"  prev=\"$arg\"\n" +
+		"done\n" +
+		"echo \"$mode\" >> " + logFile + "\n" +
+		"if [ \"$mode\" = \"resume\" ]; then\n" +
 		"  echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"resumed\"}}'\n" +
 		"  exit 0\n" +
 		"fi\n" +
@@ -559,8 +567,8 @@ func TestRun_GroupMessagesUseSeparateSessionsPerSender(t *testing.T) {
 	require.NoError(t, err)
 	lines := strings.Split(strings.TrimSpace(string(logData)), "\n")
 	require.Len(t, lines, 2)
-	assert.Equal(t, "exec --json", lines[0])
-	assert.Equal(t, "exec resume", lines[1])
+	assert.Equal(t, "fresh", lines[0])
+	assert.Equal(t, "resume", lines[1])
 }
 
 func TestRun_GroupPromptIncludesSpeakerMetadata(t *testing.T) {
