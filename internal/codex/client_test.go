@@ -371,10 +371,18 @@ func TestRun_SessionResume(t *testing.T) {
 	// Second call: should use "resume" subcommand.
 	binDir := t.TempDir()
 	script := filepath.Join(binDir, "codex")
-	// Script writes its first arg (exec/resume) to a file, emits JSONL.
+	// Script records whether this invocation used the resume subcommand.
 	logFile := filepath.Join(t.TempDir(), "mode.log")
 	scriptContent := `#!/bin/sh
-echo "$1 $2" >> ` + logFile + `
+mode=fresh
+prev=
+for arg in "$@"; do
+  if [ "$prev" = "exec" ] && [ "$arg" = "resume" ]; then
+    mode=resume
+  fi
+  prev="$arg"
+done
+echo "$mode" >> ` + logFile + `
 echo '{"type":"thread.started","thread_id":"sess-abc"}'
 echo '{"type":"item.completed","item":{"type":"agent_message","text":"response"}}'
 `
@@ -402,8 +410,8 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"response"}
 	require.NoError(t, err)
 	lines := strings.Split(strings.TrimSpace(string(logData)), "\n")
 	require.Len(t, lines, 2)
-	assert.Equal(t, "exec --json", lines[0])
-	assert.Equal(t, "exec resume", lines[1])
+	assert.Equal(t, "fresh", lines[0])
+	assert.Equal(t, "resume", lines[1])
 
 	// Verify store has one entry (upserted), with updated title from resume.
 	sessions := store.List(0, 0)
@@ -418,10 +426,18 @@ func TestRun_ResumeFailureFallsBackToFresh(t *testing.T) {
 	binDir := t.TempDir()
 	script := filepath.Join(binDir, "codex")
 	callFile := filepath.Join(t.TempDir(), "calls.log")
-	// Script: if "resume" is arg2, fail; otherwise succeed.
+	// Script: if this is an exec resume invocation, fail; otherwise succeed.
 	scriptContent := `#!/bin/sh
-echo "$2" >> ` + callFile + `
-if [ "$2" = "resume" ]; then
+mode=fresh
+prev=
+for arg in "$@"; do
+  if [ "$prev" = "exec" ] && [ "$arg" = "resume" ]; then
+    mode=resume
+  fi
+  prev="$arg"
+done
+echo "$mode" >> ` + callFile + `
+if [ "$mode" = "resume" ]; then
   exit 1
 fi
 echo '{"type":"thread.started","thread_id":"new-sess"}'
@@ -451,7 +467,7 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"fresh resp
 	calls := strings.Split(strings.TrimSpace(string(callData)), "\n")
 	require.Len(t, calls, 2)
 	assert.Equal(t, "resume", calls[0])
-	assert.Equal(t, "--json", calls[1])
+	assert.Equal(t, "fresh", calls[1])
 }
 
 func TestParseJSONL_ThreadAndMessage(t *testing.T) {
@@ -650,7 +666,15 @@ func TestRunStream_SessionResume(t *testing.T) {
 	script := filepath.Join(binDir, "codex")
 	logFile := filepath.Join(t.TempDir(), "mode.log")
 	scriptContent := `#!/bin/sh
-echo "$1 $2" >> ` + logFile + `
+mode=fresh
+prev=
+for arg in "$@"; do
+  if [ "$prev" = "exec" ] && [ "$arg" = "resume" ]; then
+    mode=resume
+  fi
+  prev="$arg"
+done
+echo "$mode" >> ` + logFile + `
 echo '{"type":"thread.started","thread_id":"sess-abc"}'
 echo '{"type":"item.completed","item":{"type":"agent_message","text":"response"}}'
 `
@@ -674,8 +698,8 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"response"}
 	require.NoError(t, err)
 	lines := strings.Split(strings.TrimSpace(string(logData)), "\n")
 	require.Len(t, lines, 2)
-	assert.Equal(t, "exec --json", lines[0])
-	assert.Equal(t, "exec resume", lines[1])
+	assert.Equal(t, "fresh", lines[0])
+	assert.Equal(t, "resume", lines[1])
 }
 
 func TestRunStream_TimeoutPreservesStartedSession(t *testing.T) {
@@ -946,12 +970,25 @@ func TestTraceCommandName(t *testing.T) {
 		{"single", []string{"exec"}, "exec"},
 		{"two args", []string{"exec", "resume"}, "exec resume"},
 		{"three args", []string{"exec", "resume", "--json"}, "exec resume"},
+		{"global approval fresh", []string{"--ask-for-approval", "never", "exec", "--json"}, "exec"},
+		{"global approval resume", []string{"--ask-for-approval", "never", "exec", "resume", "--json"}, "exec resume"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, traceCommandName(tt.args))
 		})
 	}
+}
+
+func TestExecArgsDisableApprovalPrompts(t *testing.T) {
+	assert.Equal(t,
+		[]string{"--ask-for-approval", "never", "exec", "--json"},
+		execArgs("--json"),
+	)
+	assert.Equal(t,
+		[]string{"--ask-for-approval", "never", "exec", "resume", "--json"},
+		execArgs("resume", "--json"),
+	)
 }
 
 func TestResumeSandboxArgs(t *testing.T) {
