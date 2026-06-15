@@ -60,7 +60,7 @@ func codexPrompt(msg channel.Message) string {
 func turnContextNote() string {
 	now := time.Now().Format(time.RFC3339)
 	return "[Current turn time: " + now + "]\n" +
-		"[Cron authoring: use the cron tool for reminders, delayed follow-ups, and recurring work when the user gives a concrete date, time, interval, cadence, or cron expression. If the cron tool is unavailable or returns an error, report that scheduling failed instead of using shell sleep, polling, or a blocking wait. Do not invent a time-based schedule when the user only asks for a future policy or preference. Use the current turn time as the source of truth for now, today, tomorrow, and relative times.]\n"
+		"[Cron tool: for any natural-language request to create, list, show, check, run, trigger, stop, resume, remove, or clear scheduled jobs/reminders, call the cron tool before answering. Use action=list for questions like \"what reminders do I have\", \"what do I need to do later\", or \"scheduled jobs\". Never answer scheduled-job state from chat history or memory. Use action=add only when the reminder/task payload is meaningful; if the request refers to prior context, build the payload from that context. If the cron tool is unavailable or returns an error, report that clearly instead of using shell sleep, polling, or a blocking wait. Use the current turn time as the source of truth for now, today, tomorrow, and relative times.]\n"
 }
 
 func formatGroupPrompt(msg channel.Message) string {

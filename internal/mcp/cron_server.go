@@ -226,9 +226,12 @@ func cronToolDefinition() map[string]any {
 		"description": strings.Join([]string{
 			"Manage clawdex scheduled jobs for reminders, delayed follow-ups, and recurring work.",
 			"Use this instead of shell sleep or polling when the user asks to do something later.",
+			"Use action=\"list\" before answering natural-language questions about existing reminders, scheduled jobs, or what the user needs to do later.",
+			"Use action=\"get\" for one job's details, action=\"run\" for trigger/run now, and update/remove for changes or cancellation.",
 			"Create jobs only when the user provides a concrete date, time, interval, cadence, or cron expression.",
 			"Jobs are automatically scoped to the current chat; do not invent another delivery target.",
 			"Use payload.kind=\"message\" for fixed reminder text and payload.kind=\"agent\" when fresh reasoning should run at schedule time.",
+			"Payload text must be the actual reminder/task, not scheduling control text such as \"trigger once now\".",
 			"action=\"run\" starts the job asynchronously and returns status=\"running\" before final delivery completes.",
 		}, " "),
 		"inputSchema": map[string]any{
@@ -236,14 +239,18 @@ func cronToolDefinition() map[string]any {
 			"additionalProperties": true,
 			"properties": map[string]any{
 				"action": map[string]any{
-					"type": "string",
-					"enum": []string{"status", "list", "get", "add", "update", "remove", "run"},
+					"type":        "string",
+					"description": "status, list, get, add, update, remove, or run a scheduled job.",
+					"enum":        []string{"status", "list", "get", "add", "update", "remove", "run"},
 				},
-				"include_disabled": map[string]any{"type": "boolean"},
-				"id":               map[string]any{"type": "string"},
-				"job_id":           map[string]any{"type": "string"},
-				"job":              cronJobSchema(),
-				"patch":            cronPatchSchema(),
+				"include_disabled": map[string]any{
+					"type":        "boolean",
+					"description": "Set true only when the user asks for disabled, completed, or historical jobs.",
+				},
+				"id":     map[string]any{"type": "string"},
+				"job_id": map[string]any{"type": "string"},
+				"job":    cronJobSchema(),
+				"patch":  cronPatchSchema(),
 			},
 			"required": []string{"action"},
 		},

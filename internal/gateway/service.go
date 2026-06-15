@@ -279,16 +279,6 @@ func (s *Service) processJob(ctx context.Context, j job) {
 		return
 	}
 
-	if resp, ok := s.handleNaturalCronRequest(ctx, j.msg); ok {
-		logger.Info("natural cron request handled",
-			"channel", j.msg.Channel,
-			"chat", j.msg.ChatID,
-			"msg", j.msg.MessageID,
-		)
-		s.replyCommand(ctx, j, resp)
-		return
-	}
-
 	unlock := s.lockChat(j.msg)
 	defer unlock()
 
