@@ -44,10 +44,11 @@ func CleanEnv() []string {
 }
 
 const (
-	codexExecutableName     = "codex"
-	execErrNotFoundText     = "executable file not found in $PATH"
-	traceScannerInitialSize = 64 * 1024
-	traceScannerMaxSize     = 1024 * 1024
+	codexExecutableName = "codex"
+	execErrNotFoundText = "executable file not found in $PATH"
+	jsonLineReaderSize  = 64 * 1024
+	jsonLineMaxSize     = 4 * 1024 * 1024
+	traceLineMaxSize    = 64 * 1024
 
 	// cancelGracePeriod is how long we wait after SIGINT before force-killing.
 	cancelGracePeriod = 5 * time.Second
@@ -97,10 +98,70 @@ func (t *TraceLogger) Log(msg string, args ...any) {
 	t.logger.Info(msg, args...)
 }
 
-func newTraceScanner(r io.Reader) *bufio.Scanner {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, traceScannerInitialSize), traceScannerMaxSize)
-	return scanner
+type jsonLine struct {
+	Text      string
+	Truncated bool
+}
+
+type jsonLineReader struct {
+	r   *bufio.Reader
+	max int
+}
+
+func newJSONLineReader(r io.Reader) *jsonLineReader {
+	return &jsonLineReader{
+		r:   bufio.NewReaderSize(r, jsonLineReaderSize),
+		max: jsonLineMaxSize,
+	}
+}
+
+func (r *jsonLineReader) ReadLine() (jsonLine, error) {
+	var buf []byte
+	truncated := false
+	for {
+		chunk, err := r.r.ReadSlice('\n')
+		if len(chunk) > 0 && !truncated {
+			remaining := r.max - len(buf)
+			if remaining > 0 {
+				if len(chunk) <= remaining {
+					buf = append(buf, chunk...)
+				} else {
+					buf = append(buf, chunk[:remaining]...)
+					truncated = true
+				}
+			} else {
+				truncated = true
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if err != nil {
+			if err == io.EOF && (len(buf) > 0 || truncated) {
+				return jsonLine{Text: trimJSONLineEnding(string(buf)), Truncated: truncated}, nil
+			}
+			return jsonLine{}, err
+		}
+		return jsonLine{Text: trimJSONLineEnding(string(buf)), Truncated: truncated}, nil
+	}
+}
+
+func trimJSONLineEnding(line string) string {
+	line = strings.TrimSuffix(line, "\n")
+	return strings.TrimSuffix(line, "\r")
+}
+
+func traceLine(line jsonLine) string {
+	text := line.Text
+	truncated := line.Truncated
+	if len(text) > traceLineMaxSize {
+		text = text[:traceLineMaxSize]
+		truncated = true
+	}
+	if truncated {
+		return text + "... [clawdex: stdout line truncated]"
+	}
+	return text
 }
 
 // jsonEvent represents a single JSONL event emitted by `codex exec --json`.
@@ -522,15 +583,26 @@ func (c *Client) runCodexStream(ctx context.Context, args []string, extraEnv []s
 	// intermediate responses remain visible during streaming.
 	var streamText string
 	var rawBuf bytes.Buffer
-	scanner := newTraceScanner(stdout)
-	for scanner.Scan() {
-		line := scanner.Text()
-		rawBuf.WriteString(line)
+	reader := newJSONLineReader(stdout)
+	var readErr error
+	for {
+		line, err := reader.ReadLine()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			readErr = err
+			break
+		}
+		c.trace("codex stdout", traceArgs(traceBase, "line", traceLine(line))...)
+		if line.Truncated {
+			continue
+		}
+		rawBuf.WriteString(line.Text)
 		rawBuf.WriteByte('\n')
-		c.trace("codex stdout", traceArgs(traceBase, "line", line)...)
 
 		var ev jsonEvent
-		if json.Unmarshal([]byte(line), &ev) != nil {
+		if json.Unmarshal([]byte(line.Text), &ev) != nil {
 			continue
 		}
 		if ev.Type == "thread.started" && ev.ThreadID != "" {
@@ -556,11 +628,10 @@ func (c *Client) runCodexStream(ctx context.Context, args []string, extraEnv []s
 		}
 	}
 
-	scanErr := scanner.Err()
 	waitErr := cmd.Wait()
 	stderrBuf.Flush()
-	if scanErr != nil && waitErr == nil {
-		waitErr = scanErr
+	if readErr != nil && waitErr == nil {
+		waitErr = readErr
 	}
 
 	raw := rawBuf.String()
@@ -708,15 +779,26 @@ func (c *Client) runCodex(ctx context.Context, args []string, extraEnv []string,
 
 	var threadID, agentText string
 	var rawBuf bytes.Buffer
-	scanner := newTraceScanner(stdout)
-	for scanner.Scan() {
-		line := scanner.Text()
-		rawBuf.WriteString(line)
+	reader := newJSONLineReader(stdout)
+	var readErr error
+	for {
+		line, err := reader.ReadLine()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			readErr = err
+			break
+		}
+		c.trace("codex stdout", traceArgs(traceBase, "line", traceLine(line))...)
+		if line.Truncated {
+			continue
+		}
+		rawBuf.WriteString(line.Text)
 		rawBuf.WriteByte('\n')
-		c.trace("codex stdout", traceArgs(traceBase, "line", line)...)
 
 		var ev jsonEvent
-		if json.Unmarshal([]byte(line), &ev) != nil {
+		if json.Unmarshal([]byte(line.Text), &ev) != nil {
 			continue
 		}
 		if ev.Type == "thread.started" && ev.ThreadID != "" {
@@ -732,11 +814,10 @@ func (c *Client) runCodex(ctx context.Context, args []string, extraEnv []string,
 		}
 	}
 
-	scanErr := scanner.Err()
 	waitErr := cmd.Wait()
 	stderrBuf.Flush()
-	if scanErr != nil && waitErr == nil {
-		waitErr = scanErr
+	if readErr != nil && waitErr == nil {
+		waitErr = readErr
 	}
 
 	raw := rawBuf.String()
@@ -757,14 +838,20 @@ func (c *Client) runCodex(ctx context.Context, args []string, extraEnv []string,
 
 // parseJSONL scans JSONL bytes for the thread_id and last agent_message text.
 func parseJSONL(data []byte) (threadID string, agentText string) {
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
+	reader := newJSONLineReader(bytes.NewReader(data))
+	for {
+		line, err := reader.ReadLine()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+		if line.Truncated || line.Text == "" {
 			continue
 		}
 		var ev jsonEvent
-		if json.Unmarshal(line, &ev) != nil {
+		if json.Unmarshal([]byte(line.Text), &ev) != nil {
 			continue
 		}
 		if ev.Type == "thread.started" && ev.ThreadID != "" {
@@ -842,14 +929,20 @@ func looksLikeJSONL(raw string) bool {
 }
 
 func extractErrorFromJSONL(raw string) string {
-	scanner := bufio.NewScanner(strings.NewReader(raw))
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
+	reader := newJSONLineReader(strings.NewReader(raw))
+	for {
+		line, err := reader.ReadLine()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+		if line.Truncated || line.Text == "" {
 			continue
 		}
 		var ev jsonEvent
-		if json.Unmarshal(line, &ev) != nil {
+		if json.Unmarshal([]byte(line.Text), &ev) != nil {
 			continue
 		}
 		// Prefer the top-level "error" event message.

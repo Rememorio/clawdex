@@ -334,6 +334,38 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"Hello from
 	assert.True(t, sessions[0].Active)
 }
 
+func TestRun_JSONLSkipsOversizedToolEvent(t *testing.T) {
+	binDir := t.TempDir()
+	script := filepath.Join(binDir, "codex")
+	scriptContent := `#!/bin/sh
+echo '{"type":"thread.started","thread_id":"long-line-session"}'
+printf '{"type":"item.completed","item":{"type":"command_execution","text":"'
+head -c 4194305 /dev/zero | tr '\0' 'x'
+printf '"}}\n'
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"ok after long line"}}'
+`
+	require.NoError(t, os.WriteFile(script, []byte(scriptContent), 0o755))
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	tracePath := filepath.Join(t.TempDir(), "codex.log")
+	traceFile, err := os.Create(tracePath)
+	require.NoError(t, err)
+
+	c := newTestCodexClient(t)
+	c.Trace = NewTraceLogger(traceFile)
+
+	result := c.Run(context.Background(), 42, "test", nil, "", "")
+	require.NoError(t, traceFile.Close())
+	assert.Equal(t, "ok after long line", result)
+	assert.Equal(t, "long-line-session", c.GetSessionID(42))
+
+	traceData, err := os.ReadFile(tracePath)
+	require.NoError(t, err)
+	traceText := string(traceData)
+	assert.Contains(t, traceText, "stdout line truncated")
+	assert.NotContains(t, traceText, "token too long")
+}
+
 func TestRun_SessionResume(t *testing.T) {
 	// First call: fresh exec stores session ID.
 	// Second call: should use "resume" subcommand.
@@ -571,6 +603,30 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"final answ
 
 	result := c.RunStream(context.Background(), 1, "test", nil, func(text string) {}, "", "")
 	assert.Equal(t, "final answer", result)
+}
+
+func TestRunStream_SkipsOversizedToolEvent(t *testing.T) {
+	binDir := t.TempDir()
+	script := filepath.Join(binDir, "codex")
+	scriptContent := `#!/bin/sh
+echo '{"type":"thread.started","thread_id":"stream-long-line"}'
+printf '{"type":"item.completed","item":{"type":"command_execution","text":"'
+head -c 4194305 /dev/zero | tr '\0' 'x'
+printf '"}}\n'
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"stream ok"}}'
+`
+	require.NoError(t, os.WriteFile(script, []byte(scriptContent), 0o755))
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	c := newTestCodexClient(t)
+
+	var chunks []string
+	result := c.RunStream(context.Background(), 1, "test", nil, func(text string) {
+		chunks = append(chunks, text)
+	}, "", "")
+	assert.Equal(t, "stream ok", result)
+	assert.Equal(t, []string{"stream ok"}, chunks)
+	assert.Equal(t, "stream-long-line", c.GetSessionID(1))
 }
 
 func TestRunStream_NilCallback(t *testing.T) {
