@@ -5,4 +5,4 @@ package version
 // Set via ldflags at build time:
 //
 //	go build -ldflags "-X github.com/Rememorio/clawdex/internal/version.Version=0.1.0"
-var Version = "1.2.11"
+var Version = "1.2.12"
