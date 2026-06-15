@@ -233,6 +233,8 @@ echo "$CLAWDEX_CRON_CONTEXT_TOKEN" > ` + envFile + `
 	argsText := string(argsData)
 	assert.Contains(t, argsText, "mcp_servers.clawdex_cron.command=\"clawdex\"")
 	assert.Contains(t, argsText, "mcp_servers.clawdex_cron.startup_timeout_sec=60")
+	assert.Contains(t, argsText, "mcp_servers.clawdex_cron.default_tools_approval_mode=\"approve\"")
+	assert.Contains(t, argsText, "mcp_servers.clawdex_cron.tools.cron.approval_mode=\"approve\"")
 	assert.Contains(t, argsText, "mcp_servers.clawdex_cron.env.CLAWDEX_GATEWAY_URL=\"http://127.0.0.1:10086\"")
 	assert.Contains(t, argsText, "mcp_servers.clawdex_cron.env.CLAWDEX_CRON_CONTEXT_TOKEN=\"token-123\"")
 
