@@ -21,6 +21,9 @@ const (
 	defaultRepository = "Rememorio/clawdex"
 	defaultAPIBaseURL = "https://api.github.com"
 	defaultGitHubURL  = "https://github.com"
+
+	defaultRequestTimeout  = 60 * time.Second
+	defaultDownloadTimeout = 30 * time.Minute
 )
 
 // Options controls the self-update workflow.
@@ -119,7 +122,14 @@ func (r *runner) client() *http.Client {
 	if r.opts.HTTPClient != nil {
 		return r.opts.HTTPClient
 	}
-	return &http.Client{Timeout: 60 * time.Second}
+	return &http.Client{Timeout: defaultRequestTimeout}
+}
+
+func (r *runner) downloadClient() *http.Client {
+	if r.opts.HTTPClient != nil {
+		return r.opts.HTTPClient
+	}
+	return &http.Client{}
 }
 
 func (r *runner) stdout() io.Writer {
@@ -316,13 +326,16 @@ func (r *runner) download(ctx context.Context, a asset, w io.Writer) (int64, err
 	if a.BrowserDownloadURL == "" {
 		return 0, fmt.Errorf("release asset %q has no download URL", a.Name)
 	}
+	ctx, cancel := context.WithTimeout(ctx, defaultDownloadTimeout)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.BrowserDownloadURL, nil)
 	if err != nil {
 		return 0, fmt.Errorf("create download request: %w", err)
 	}
 	req.Header.Set("User-Agent", "clawdex/"+normalizeVersion(r.opts.CurrentVersion))
 
-	resp, err := r.client().Do(req)
+	resp, err := r.downloadClient().Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("download %s: %w", a.Name, err)
 	}

@@ -3,12 +3,14 @@ package updater
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunCheckOnlyReportsAvailableUpdate(t *testing.T) {
@@ -141,6 +143,54 @@ func TestRunErrorsWhenAssetMissing(t *testing.T) {
 	}
 }
 
+func TestDefaultDownloadClientHasNoTotalTimeout(t *testing.T) {
+	r := newRunner(Options{})
+
+	if got := r.client().Timeout; got != defaultRequestTimeout {
+		t.Fatalf("client timeout = %v, want %v", got, defaultRequestTimeout)
+	}
+	if got := r.downloadClient().Timeout; got != 0 {
+		t.Fatalf("download client timeout = %v, want 0", got)
+	}
+}
+
+func TestDownloadAppliesLongRequestDeadline(t *testing.T) {
+	var gotDeadline time.Time
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		deadline, ok := req.Context().Deadline()
+		if !ok {
+			t.Fatal("download request has no deadline")
+		}
+		gotDeadline = deadline
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("new-binary")),
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	})}
+	r := newRunner(Options{
+		CurrentVersion: "0.9.0",
+		HTTPClient:     client,
+	})
+
+	var out strings.Builder
+	n, err := r.download(context.Background(), asset{
+		Name:               "clawdex-linux-amd64",
+		BrowserDownloadURL: "https://example.test/clawdex-linux-amd64",
+	}, &out)
+	if err != nil {
+		t.Fatalf("download() error = %v", err)
+	}
+	if n != int64(len("new-binary")) {
+		t.Fatalf("download() bytes = %d", n)
+	}
+	remaining := time.Until(gotDeadline)
+	if remaining < defaultDownloadTimeout-time.Minute || remaining > defaultDownloadTimeout {
+		t.Fatalf("download deadline remaining = %v, want near %v", remaining, defaultDownloadTimeout)
+	}
+}
+
 func TestLatestReleaseFromWebBuildsDownloadURLFromRedirect(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/owner/repo/releases/latest" {
@@ -248,4 +298,10 @@ func readFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
