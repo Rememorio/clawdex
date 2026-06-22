@@ -34,6 +34,18 @@ type apiClient struct {
 	info       baseInfo
 }
 
+type sendMessageError struct {
+	Ret    int
+	ErrMsg string
+}
+
+func (e *sendMessageError) Error() string {
+	if strings.TrimSpace(e.ErrMsg) == "" {
+		return fmt.Sprintf("sendmessage ret=%d", e.Ret)
+	}
+	return fmt.Sprintf("sendmessage ret=%d: %s", e.Ret, e.ErrMsg)
+}
+
 // newAPIClient creates an API client for the given endpoint and token.
 func newAPIClient(baseURL, token string) *apiClient {
 	return &apiClient{
@@ -120,7 +132,7 @@ func (c *apiClient) sendMessage(ctx context.Context, msg *weixinMessage) error {
 		return err
 	}
 	if resp.Ret != 0 {
-		return fmt.Errorf("sendmessage ret=%d: %s", resp.Ret, resp.ErrMsg)
+		return &sendMessageError{Ret: resp.Ret, ErrMsg: resp.ErrMsg}
 	}
 	return nil
 }
