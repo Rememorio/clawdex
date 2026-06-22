@@ -458,8 +458,50 @@ func TestSendTextError(t *testing.T) {
 	ps := pairing.NewStore(5 * time.Minute)
 	d := New(Config{BaseURL: ts.URL, Token: "tok", DMPolicy: "open"}, ps)
 
-	// Should not panic even though send fails.
-	d.sendText(context.Background(), "user@im.wechat", "test")
+	err := d.sendText(context.Background(), "user@im.wechat", "test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "http 500")
+}
+
+func TestSendTextRetriesWithoutStaleContextToken(t *testing.T) {
+	var contextTokens []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req sendMessageReq
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		contextTokens = append(contextTokens, req.Msg.ContextToken)
+		if req.Msg.ContextToken == "stale-token" {
+			json.NewEncoder(w).Encode(sendMessageResp{Ret: sendMessageStaleContextRet})
+			return
+		}
+		json.NewEncoder(w).Encode(sendMessageResp{Ret: 0})
+	}))
+	defer ts.Close()
+
+	ps := pairing.NewStore(5 * time.Minute)
+	d := New(Config{BaseURL: ts.URL, Token: "tok", DMPolicy: "open"}, ps)
+	d.mu.Lock()
+	d.contextTokens["user@im.wechat"] = "stale-token"
+	d.mu.Unlock()
+
+	err := d.SendText(context.Background(), channel.DeliveryTarget{Target: "user@im.wechat"}, "test")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"stale-token", ""}, contextTokens)
+	assert.Equal(t, "", d.getContextToken("user@im.wechat"))
+}
+
+func TestSendTextReturnsRetError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(sendMessageResp{Ret: -9, ErrMsg: "blocked"})
+	}))
+	defer ts.Close()
+
+	ps := pairing.NewStore(5 * time.Minute)
+	d := New(Config{BaseURL: ts.URL, Token: "tok", DMPolicy: "open"}, ps)
+
+	err := d.SendText(context.Background(), channel.DeliveryTarget{Target: "user@im.wechat"}, "test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "weixin proactive send chunk 1/1")
+	assert.Contains(t, err.Error(), "sendmessage ret=-9: blocked")
 }
 
 // ── getTypingTicket ──
@@ -543,6 +585,22 @@ func TestResponderReplyChunked(t *testing.T) {
 	err := r.Reply(context.Background(), channel.Message{}, "1234567890")
 	require.NoError(t, err)
 	assert.Equal(t, 2, sentCount)
+}
+
+func TestResponderReplyReturnsSendError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(sendMessageResp{Ret: -9, ErrMsg: "blocked"})
+	}))
+	defer ts.Close()
+
+	ps := pairing.NewStore(5 * time.Minute)
+	d := New(Config{BaseURL: ts.URL, Token: "tok", DMPolicy: "open"}, ps)
+	r := &weixinResponder{driver: d, userID: "user@im.wechat"}
+
+	err := r.Reply(context.Background(), channel.Message{}, "hello")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "weixin reply chunk 1/1")
+	assert.Contains(t, err.Error(), "sendmessage ret=-9: blocked")
 }
 
 func TestResponderTypingWithTicket(t *testing.T) {
@@ -660,6 +718,40 @@ func TestResponderReplyWithMediaNoCaption(t *testing.T) {
 	err := r.ReplyWithMedia(context.Background(), channel.Message{}, "", []string{filePath})
 	require.NoError(t, err)
 	assert.Equal(t, 1, sentCount)
+}
+
+func TestResponderReplyWithMediaReturnsSendError(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "photo.png")
+	require.NoError(t, os.WriteFile(filePath, []byte("png-data"), 0o644))
+
+	uploadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer uploadServer.Close()
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "getuploadurl"):
+			json.NewEncoder(w).Encode(getUploadURLResp{
+				Ret: 0, UploadParam: "upload-param-img", UploadFullURL: uploadServer.URL + "/upload",
+			})
+		case strings.Contains(r.URL.Path, "sendmessage"):
+			json.NewEncoder(w).Encode(sendMessageResp{Ret: -9, ErrMsg: "blocked"})
+		default:
+			json.NewEncoder(w).Encode(notifyResp{Ret: 0})
+		}
+	}))
+	defer apiServer.Close()
+
+	ps := pairing.NewStore(5 * time.Minute)
+	d := New(Config{BaseURL: apiServer.URL, Token: "tok", DMPolicy: "open"}, ps)
+
+	r := &weixinResponder{driver: d, userID: "user@im.wechat"}
+	err := r.ReplyWithMedia(context.Background(), channel.Message{}, "", []string{filePath})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "weixin media send photo.png")
+	assert.Contains(t, err.Error(), "sendmessage ret=-9: blocked")
 }
 
 func TestResponderReplyWithMediaUploadFails(t *testing.T) {

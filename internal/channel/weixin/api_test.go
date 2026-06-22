@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -84,8 +85,12 @@ func TestAPISendMessageError(t *testing.T) {
 
 	client := newAPIClient(ts.URL, "test-token")
 	err := client.sendMessage(context.Background(), &weixinMessage{})
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "bad request")
+	var sendErr *sendMessageError
+	require.True(t, errors.As(err, &sendErr))
+	assert.Equal(t, -1, sendErr.Ret)
+	assert.Equal(t, "bad request", sendErr.ErrMsg)
 }
 
 func TestAPISendTyping(t *testing.T) {

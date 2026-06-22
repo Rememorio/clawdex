@@ -2,6 +2,7 @@ package weixin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"os"
@@ -17,13 +18,14 @@ import (
 )
 
 const (
-	defaultBaseURL         = "https://oai.ilink.bot"
-	defaultTextChunkLimit  = 4000
-	defaultLongPollTimeout = int64(35000) // ms
-	maxConsecutiveFailures = 3
-	backoffDelay           = 30 * time.Second
-	retryDelay             = 2 * time.Second
-	sessionExpiredErrCode  = -14
+	defaultBaseURL             = "https://oai.ilink.bot"
+	defaultTextChunkLimit      = 4000
+	defaultLongPollTimeout     = int64(35000) // ms
+	maxConsecutiveFailures     = 3
+	backoffDelay               = 30 * time.Second
+	retryDelay                 = 2 * time.Second
+	sessionExpiredErrCode      = -14
+	sendMessageStaleContextRet = -2
 )
 
 // Config controls Weixin driver behavior.
@@ -357,28 +359,47 @@ func (d *Driver) handlePairing(ctx context.Context, msg *weixinMessage) {
 	code := d.pairingStore.Create(senderID, msg.FromUserID, msg.FromUserID, d.name)
 
 	text := fmt.Sprintf("🔐 Pairing required.\n\nYour code: %s\n\nAsk the admin to approve:\n  clawdex pairing approve %s", code, code)
-	d.sendText(ctx, msg.FromUserID, text)
+	if err := d.sendText(ctx, msg.FromUserID, text); err != nil {
+		logger.Error("weixin pairing reply failed", "channel", d.name, "to", msg.FromUserID, "error", err)
+	}
 }
 
 // sendText is a convenience method to send a text message to a user.
-func (d *Driver) sendText(ctx context.Context, toUserID, text string) {
+func (d *Driver) sendText(ctx context.Context, toUserID, text string) error {
+	return d.sendMessage(ctx, toUserID, []messageItem{
+		{
+			Type:     itemTypeText,
+			TextItem: &textItem{Text: text},
+		},
+	})
+}
+
+func (d *Driver) sendMessage(ctx context.Context, toUserID string, items []messageItem) error {
 	contextToken := d.getContextToken(toUserID)
+	if err := d.sendMessageWithContext(ctx, toUserID, items, contextToken); err == nil {
+		return nil
+	} else if !shouldRetryWithoutContextToken(err, contextToken) {
+		return err
+	} else {
+		d.clearContextToken(toUserID, contextToken)
+		if retryErr := d.sendMessageWithContext(ctx, toUserID, items, ""); retryErr != nil {
+			return fmt.Errorf("%w; retry without context token: %v", err, retryErr)
+		}
+		logger.Warn("weixin send retried without context token", "channel", d.name, "to", toUserID)
+		return nil
+	}
+}
+
+func (d *Driver) sendMessageWithContext(ctx context.Context, toUserID string, items []messageItem, contextToken string) error {
 	outMsg := &weixinMessage{
 		ToUserID:     toUserID,
 		ClientID:     generateClientID(),
 		MessageType:  messageTypeBot,
 		MessageState: messageStateFinish,
-		ItemList: []messageItem{
-			{
-				Type:     itemTypeText,
-				TextItem: &textItem{Text: text},
-			},
-		},
+		ItemList:     items,
 		ContextToken: contextToken,
 	}
-	if err := d.api.sendMessage(ctx, outMsg); err != nil {
-		logger.Error("weixin send failed", "channel", d.name, "to", toUserID, "error", err)
-	}
+	return d.api.sendMessage(ctx, outMsg)
 }
 
 // SendText sends a proactive text message to a Weixin user.
@@ -388,8 +409,10 @@ func (d *Driver) SendText(ctx context.Context, target channel.DeliveryTarget, te
 		return fmt.Errorf("weixin proactive send: missing target user id")
 	}
 	chunks := splitTextChunks(markdownFilter(text), d.cfg.TextChunkLimit)
-	for _, chunk := range chunks {
-		d.sendText(ctx, toUserID, chunk)
+	for i, chunk := range chunks {
+		if err := d.sendText(ctx, toUserID, chunk); err != nil {
+			return fmt.Errorf("weixin proactive send chunk %d/%d: %w", i+1, len(chunks), err)
+		}
 	}
 	return nil
 }
@@ -463,8 +486,10 @@ func (r *weixinResponder) Reply(ctx context.Context, _ channel.Message, text str
 
 	// Split long messages into chunks.
 	chunks := splitTextChunks(text, r.driver.cfg.TextChunkLimit)
-	for _, chunk := range chunks {
-		r.driver.sendText(ctx, r.userID, chunk)
+	for i, chunk := range chunks {
+		if err := r.driver.sendText(ctx, r.userID, chunk); err != nil {
+			return fmt.Errorf("weixin reply chunk %d/%d: %w", i+1, len(chunks), err)
+		}
 	}
 	return nil
 }
@@ -473,7 +498,9 @@ func (r *weixinResponder) ReplyWithMedia(ctx context.Context, _ channel.Message,
 	r.stopTyping(ctx)
 	// Send caption text first if present.
 	if caption != "" {
-		r.driver.sendText(ctx, r.userID, markdownFilter(caption))
+		if err := r.driver.sendText(ctx, r.userID, markdownFilter(caption)); err != nil {
+			return fmt.Errorf("weixin media caption send: %w", err)
+		}
 	}
 
 	for _, fp := range filePaths {
@@ -481,7 +508,9 @@ func (r *weixinResponder) ReplyWithMedia(ctx context.Context, _ channel.Message,
 		uploadParam, aesKeyHex, err := r.driver.api.uploadMedia(ctx, fp, r.userID, mediaType)
 		if err != nil {
 			logger.Warn("weixin media upload failed", "channel", r.driver.name, "file", fp, "error", err)
-			r.driver.sendText(ctx, r.userID, "⚠️ 媒体文件上传失败，请稍后重试。")
+			if sendErr := r.driver.sendText(ctx, r.userID, "⚠️ 媒体文件上传失败，请稍后重试。"); sendErr != nil {
+				return fmt.Errorf("weixin media upload failed and notice send failed: %w", sendErr)
+			}
 			continue
 		}
 
@@ -506,20 +535,27 @@ func (r *weixinResponder) ReplyWithMedia(ctx context.Context, _ channel.Message,
 			}
 		}
 
-		contextToken := r.driver.getContextToken(r.userID)
-		outMsg := &weixinMessage{
-			ToUserID:     r.userID,
-			ClientID:     generateClientID(),
-			MessageType:  messageTypeBot,
-			MessageState: messageStateFinish,
-			ItemList:     []messageItem{item},
-			ContextToken: contextToken,
-		}
-		if err := r.driver.api.sendMessage(ctx, outMsg); err != nil {
-			logger.Warn("weixin media send failed", "channel", r.driver.name, "file", fp, "error", err)
+		if err := r.driver.sendMessage(ctx, r.userID, []messageItem{item}); err != nil {
+			return fmt.Errorf("weixin media send %s: %w", filepath.Base(fp), err)
 		}
 	}
 	return nil
+}
+
+func shouldRetryWithoutContextToken(err error, contextToken string) bool {
+	if strings.TrimSpace(contextToken) == "" {
+		return false
+	}
+	var sendErr *sendMessageError
+	return errors.As(err, &sendErr) && sendErr.Ret == sendMessageStaleContextRet
+}
+
+func (d *Driver) clearContextToken(userID, token string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.contextTokens[userID] == token {
+		delete(d.contextTokens, userID)
+	}
 }
 
 // ── Helpers ──
