@@ -312,8 +312,10 @@ func (s *Service) processJob(ctx context.Context, j job) {
 
 	s.setReceivedReaction(ctx, j)
 
-	// Send typing indicator.
-	if err := j.responder.Typing(ctx, j.msg); err != nil {
+	// Send typing indicator. Tie long-lived typing keepalives to the
+	// cancellable job context so /cancel can stop them even when the
+	// cancelled job returns before sending a final Reply.
+	if err := j.responder.Typing(jobCtx, j.msg); err != nil {
 		logger.Warn("typing failed", "channel", j.msg.Channel, "chat", j.msg.ChatID, "error", err)
 	}
 

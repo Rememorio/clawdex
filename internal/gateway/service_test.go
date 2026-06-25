@@ -1730,7 +1730,16 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"should not
 	require.NoError(t, os.WriteFile(script, []byte(scriptContent), 0o755))
 	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
 
-	resp := &mockResponder{}
+	typingCtxCh := make(chan context.Context, 1)
+	resp := &mockResponder{
+		typingFn: func(ctx context.Context, msg channel.Message) error {
+			select {
+			case typingCtxCh <- ctx:
+			default:
+			}
+			return nil
+		},
+	}
 
 	driver := &mockDriver{
 		name: "test",
@@ -1783,6 +1792,18 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"should not
 	for _, r := range resp.replies {
 		assert.NotEqual(t, "interrupted", r.Text,
 			"codex partial output must not be pushed as final after /cancel")
+	}
+
+	var typingCtx context.Context
+	select {
+	case typingCtx = <-typingCtxCh:
+	default:
+		t.Fatal("expected typing context to be captured")
+	}
+	select {
+	case <-typingCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("typing context was not cancelled with the job")
 	}
 }
 
