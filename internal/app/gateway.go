@@ -327,12 +327,13 @@ func RunGateway() error {
 		}
 
 		wxDriver := weixin.New(weixin.Config{
-			Name:           wxCfg.Name,
-			BaseURL:        wxCfg.BaseURL,
-			Token:          wxCfg.Token,
-			TextChunkLimit: wxCfg.TextChunkLimit,
-			DMPolicy:       wxCfg.DMPolicy,
-			AllowFrom:      wxCfg.AllowFrom,
+			Name:             wxCfg.Name,
+			BaseURL:          wxCfg.BaseURL,
+			Token:            wxCfg.Token,
+			TextChunkLimit:   wxCfg.TextChunkLimit,
+			DMPolicy:         wxCfg.DMPolicy,
+			AllowFrom:        wxCfg.AllowFrom,
+			ContextStorePath: filepath.Join(dataDir, "weixin", url.PathEscape(wxCfg.Name)+".context-tokens.json"),
 		}, pairingStore)
 
 		if wxCfg.DMPolicy == "pairing" {

@@ -489,6 +489,53 @@ func TestSendTextRetriesWithoutStaleContextToken(t *testing.T) {
 	assert.Equal(t, "", d.getContextToken("user@im.wechat"))
 }
 
+func TestSendTextRetriesWithoutContextTokenOnStaleRet(t *testing.T) {
+	var attempts int
+	var contextTokens []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req sendMessageReq
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		attempts++
+		contextTokens = append(contextTokens, req.Msg.ContextToken)
+		if attempts == 1 {
+			json.NewEncoder(w).Encode(sendMessageResp{Ret: sendMessageStaleContextRet})
+			return
+		}
+		json.NewEncoder(w).Encode(sendMessageResp{Ret: 0})
+	}))
+	defer ts.Close()
+
+	ps := pairing.NewStore(5 * time.Minute)
+	d := New(Config{BaseURL: ts.URL, Token: "tok", DMPolicy: "open"}, ps)
+
+	err := d.SendText(context.Background(), channel.DeliveryTarget{Target: "user@im.wechat"}, "test")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"", ""}, contextTokens)
+}
+
+func TestContextTokenStorePersistsAcrossDrivers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "weixin", "tokens.json")
+	ps := pairing.NewStore(5 * time.Minute)
+	d := New(Config{Token: "tok", DMPolicy: "open", ContextStorePath: path}, ps)
+
+	d.setContextToken("user@im.wechat", "ctx-token")
+
+	reloaded := New(Config{Token: "tok", DMPolicy: "open", ContextStorePath: path}, ps)
+	assert.Equal(t, "ctx-token", reloaded.getContextToken("user@im.wechat"))
+}
+
+func TestClearContextTokenUpdatesStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "weixin", "tokens.json")
+	ps := pairing.NewStore(5 * time.Minute)
+	d := New(Config{Token: "tok", DMPolicy: "open", ContextStorePath: path}, ps)
+
+	d.setContextToken("user@im.wechat", "ctx-token")
+	d.clearContextToken("user@im.wechat", "ctx-token")
+
+	reloaded := New(Config{Token: "tok", DMPolicy: "open", ContextStorePath: path}, ps)
+	assert.Equal(t, "", reloaded.getContextToken("user@im.wechat"))
+}
+
 func TestSendTextReturnsRetError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		json.NewEncoder(w).Encode(sendMessageResp{Ret: -9, ErrMsg: "blocked"})

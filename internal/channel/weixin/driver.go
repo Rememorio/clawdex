@@ -2,6 +2,7 @@ package weixin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -30,12 +31,13 @@ const (
 
 // Config controls Weixin driver behavior.
 type Config struct {
-	Name           string
-	BaseURL        string // API base URL (default: https://oai.ilink.bot)
-	Token          string // iLink bot token
-	TextChunkLimit int    // max runes per chunk (default 4000)
-	DMPolicy       string // "open", "pairing" (default), "allowlist"
-	AllowFrom      []string
+	Name             string
+	BaseURL          string // API base URL (default: https://oai.ilink.bot)
+	Token            string // iLink bot token
+	TextChunkLimit   int    // max runes per chunk (default 4000)
+	DMPolicy         string // "open", "pairing" (default), "allowlist"
+	AllowFrom        []string
+	ContextStorePath string // optional disk cache for per-user context tokens
 }
 
 // Driver is the Weixin channel implementation.
@@ -45,10 +47,11 @@ type Driver struct {
 	api          *apiClient
 	pairingStore *pairing.Store
 
-	mu            sync.RWMutex
-	allowFrom     map[string]bool
-	contextTokens map[string]string // userID → latest contextToken
-	typingTickets map[string]string // userID → cached typing_ticket
+	mu               sync.RWMutex
+	allowFrom        map[string]bool
+	contextTokens    map[string]string // userID → latest contextToken
+	contextStorePath string
+	typingTickets    map[string]string // userID → cached typing_ticket
 }
 
 // New constructs a Weixin driver with the provided configuration.
@@ -72,14 +75,21 @@ func New(cfg Config, ps *pairing.Store) *Driver {
 		allowFrom[id] = true
 	}
 
+	contextTokens, err := loadContextTokens(cfg.ContextStorePath)
+	if err != nil {
+		logger.Warn("weixin context token cache load failed", "channel", name, "error", err)
+		contextTokens = make(map[string]string)
+	}
+
 	return &Driver{
-		cfg:           cfg,
-		name:          name,
-		api:           newAPIClient(cfg.BaseURL, cfg.Token),
-		pairingStore:  ps,
-		allowFrom:     allowFrom,
-		contextTokens: make(map[string]string),
-		typingTickets: make(map[string]string),
+		cfg:              cfg,
+		name:             name,
+		api:              newAPIClient(cfg.BaseURL, cfg.Token),
+		pairingStore:     ps,
+		allowFrom:        allowFrom,
+		contextTokens:    contextTokens,
+		contextStorePath: cfg.ContextStorePath,
+		typingTickets:    make(map[string]string),
 	}
 }
 
@@ -188,9 +198,7 @@ func (d *Driver) processInbound(ctx context.Context, msg *weixinMessage, handler
 
 	// Cache the context token for this user.
 	if msg.ContextToken != "" {
-		d.mu.Lock()
-		d.contextTokens[msg.FromUserID] = msg.ContextToken
-		d.mu.Unlock()
+		d.setContextToken(msg.FromUserID, msg.ContextToken)
 	}
 
 	// Extract text and media from item_list.
@@ -378,7 +386,7 @@ func (d *Driver) sendMessage(ctx context.Context, toUserID string, items []messa
 	contextToken := d.getContextToken(toUserID)
 	if err := d.sendMessageWithContext(ctx, toUserID, items, contextToken); err == nil {
 		return nil
-	} else if !shouldRetryWithoutContextToken(err, contextToken) {
+	} else if !shouldRetryWithoutContextToken(err) {
 		return err
 	} else {
 		d.clearContextToken(toUserID, contextToken)
@@ -542,20 +550,79 @@ func (r *weixinResponder) ReplyWithMedia(ctx context.Context, _ channel.Message,
 	return nil
 }
 
-func shouldRetryWithoutContextToken(err error, contextToken string) bool {
-	if strings.TrimSpace(contextToken) == "" {
-		return false
-	}
+func shouldRetryWithoutContextToken(err error) bool {
 	var sendErr *sendMessageError
 	return errors.As(err, &sendErr) && sendErr.Ret == sendMessageStaleContextRet
 }
 
+func (d *Driver) setContextToken(userID, token string) {
+	d.mu.Lock()
+	d.contextTokens[userID] = token
+	err := d.saveContextTokensLocked()
+	d.mu.Unlock()
+	if err != nil {
+		logger.Warn("weixin context token cache save failed", "channel", d.name, "error", err)
+	}
+}
+
 func (d *Driver) clearContextToken(userID, token string) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if d.contextTokens[userID] == token {
 		delete(d.contextTokens, userID)
+		err := d.saveContextTokensLocked()
+		d.mu.Unlock()
+		if err != nil {
+			logger.Warn("weixin context token cache save failed", "channel", d.name, "error", err)
+		}
+		return
 	}
+	d.mu.Unlock()
+}
+
+func (d *Driver) saveContextTokensLocked() error {
+	if strings.TrimSpace(d.contextStorePath) == "" {
+		return nil
+	}
+	return saveContextTokens(d.contextStorePath, d.contextTokens)
+}
+
+func loadContextTokens(path string) (map[string]string, error) {
+	if strings.TrimSpace(path) == "" {
+		return make(map[string]string), nil
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return make(map[string]string), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var tokens map[string]string
+	if err := json.Unmarshal(data, &tokens); err != nil {
+		return nil, err
+	}
+	if tokens == nil {
+		tokens = make(map[string]string)
+	}
+	return tokens, nil
+}
+
+func saveContextTokens(path string, tokens map[string]string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create context token cache directory: %w", err)
+	}
+	data, err := json.MarshalIndent(tokens, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal context token cache: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write context token cache: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("rename context token cache: %w", err)
+	}
+	return nil
 }
 
 // ── Helpers ──
